@@ -5,7 +5,7 @@
 #include <ArduinoJson.h>
 
 WebServerManager::WebServerManager(KeyerLogic* keyer, SidetoneGenerator* sidetone, ConfigManager* configMgr)
-    : _server(80), _keyer(keyer), _sidetone(sidetone), _configMgr(configMgr) {
+    : _server(80), _ws("/ws/timeline"), _keyer(keyer), _sidetone(sidetone), _configMgr(configMgr), _wsTaskHandle(NULL) {
 }
 
 bool WebServerManager::begin() {
@@ -18,6 +18,17 @@ bool WebServerManager::begin() {
     }
     Serial.println("LittleFS mounted");
 
+    // Setup WebSocket
+    _ws.onEvent([](AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type,
+                    void *arg, uint8_t *data, size_t len) {
+        if (type == WS_EVT_CONNECT) {
+            Serial.printf("WebSocket client #%u connected\n", client->id());
+        } else if (type == WS_EVT_DISCONNECT) {
+            Serial.printf("WebSocket client #%u disconnected\n", client->id());
+        }
+    });
+    _server.addHandler(&_ws);
+
     // Setup routes
     setupRoutes();
 
@@ -25,26 +36,26 @@ bool WebServerManager::begin() {
     _server.begin();
     Serial.println("Web Server avviato su porta 80");
 
+    // Avvia WebSocket task su Core 1 (priorità bassa, dopo audio)
+    xTaskCreatePinnedToCore(
+        wsTask,             // Function
+        "WS_Timeline",      // Name
+        4096,               // Stack size
+        this,               // Parameter
+        1,                  // Priority (bassa, sotto audio task)
+        &_wsTaskHandle,     // Handle
+        1                   // Core 1
+    );
+    Serial.println("WebSocket timeline task avviato su Core 1");
+
     return true;
 }
 
 void WebServerManager::setupRoutes() {
-    // Pagina principale (serviremo HTML statico da LittleFS)
-    _server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
-        if (LittleFS.exists("/index.html")) {
-            request->send(LittleFS, "/index.html", "text/html");
-        } else {
-            // Fallback: pagina di benvenuto semplice
-            String html = "<!DOCTYPE html><html><head><title>IU3QEZ Keyer</title></head>";
-            html += "<body><h1>IU3QEZ CW HST Keyer</h1>";
-            html += "<p>Web interface in development...</p>";
-            html += "<p>API endpoints:</p><ul>";
-            html += "<li><a href='/api/status'>/api/status</a></li>";
-            html += "<li><a href='/api/config'>/api/config</a></li>";
-            html += "</ul></body></html>";
-            request->send(200, "text/html", html);
-        }
-    });
+    // Serve static files FIRST (più veloce)
+    _server.serveStatic("/", LittleFS, "/")
+        .setDefaultFile("index.html")
+        .setCacheControl("max-age=600");  // Cache 10 minuti
 
     // API: Get status
     _server.on("/api/status", HTTP_GET, [this](AsyncWebServerRequest *request) {
@@ -158,9 +169,6 @@ void WebServerManager::setupRoutes() {
         }
     );
 
-    // Serve static files from LittleFS
-    _server.serveStatic("/", LittleFS, "/").setDefaultFile("index.html");
-
     // 404 handler
     _server.onNotFound([](AsyncWebServerRequest *request) {
         request->send(404, "text/plain", "Not Found");
@@ -241,6 +249,90 @@ void WebServerManager::handleResetConfig(AsyncWebServerRequest *request) {
 
 void WebServerManager::handlePostConfig(AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
     // Gestito da body handler in setupRoutes()
+}
+
+void WebServerManager::wsTask(void* parameter) {
+    WebServerManager* self = (WebServerManager*)parameter;
+
+    Serial.println("WebSocket task started");
+
+    while (true) {
+        // Invia eventi timeline ogni 100ms
+        self->sendTimelineEvents();
+
+        // Cleanup connessioni chiuse
+        self->_ws.cleanupClients();
+
+        // Delay 100ms
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+}
+
+void WebServerManager::sendTimelineEvents() {
+    // Check se ci sono client connessi
+    if (_ws.count() == 0) {
+        return;
+    }
+
+    // Leggi eventi dal buffer timeline
+    TimelineBuffer* timeline = _keyer->getTimelineBuffer();
+    if (!timeline || timeline->available() == 0) {
+        return;
+    }
+
+    // Buffer per leggere eventi (max 100 per volta)
+    const size_t MAX_EVENTS = 100;
+    TimelineEvent events[MAX_EVENTS];
+    size_t count = timeline->read(events, MAX_EVENTS);
+
+    if (count == 0) {
+        return;
+    }
+
+    // Crea JSON con eventi
+    JsonDocument doc;
+    JsonArray eventsArray = doc["events"].to<JsonArray>();
+
+    for (size_t i = 0; i < count; i++) {
+        JsonObject evt = eventsArray.add<JsonObject>();
+        evt["ts"] = events[i].timestamp_us;
+
+        // Tipo evento
+        const char* type_str = "UNKNOWN";
+        switch (events[i].type) {
+            case EVENT_DOT_PRESS:    type_str = "DOT_PRESS"; break;
+            case EVENT_DOT_RELEASE:  type_str = "DOT_RELEASE"; break;
+            case EVENT_DASH_PRESS:   type_str = "DASH_PRESS"; break;
+            case EVENT_DASH_RELEASE: type_str = "DASH_RELEASE"; break;
+            case EVENT_KEY_ON:       type_str = "KEY_ON"; break;
+            case EVENT_KEY_OFF:      type_str = "KEY_OFF"; break;
+        }
+        evt["type"] = type_str;
+
+        // Flags
+        JsonArray flags = evt["flags"].to<JsonArray>();
+        if (events[i].flags & FLAG_IAMBIC) {
+            flags.add("IAMBIC");
+        }
+        if (events[i].flags & FLAG_MEMORY_LATCH) {
+            flags.add("MEMORY_LATCH");
+        }
+        if (events[i].flags & FLAG_DEBOUNCE_SKIP) {
+            flags.add("DEBOUNCE_SKIP");
+        }
+    }
+
+    // Statistiche buffer
+    JsonObject stats = doc["buffer_stats"].to<JsonObject>();
+    stats["total_pushed"] = timeline->getTotalPushed();
+    stats["total_dropped"] = timeline->getTotalDropped();
+    stats["overruns"] = timeline->getOverruns();
+    stats["available"] = timeline->available();
+
+    // Serializza e invia
+    String output;
+    serializeJson(doc, output);
+    _ws.textAll(output);
 }
 
 void WebServerManager::handle() {

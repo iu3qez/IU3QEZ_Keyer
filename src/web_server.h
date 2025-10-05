@@ -5,6 +5,7 @@
 #include <ESPAsyncWebServer.h>
 #include <AsyncTCP.h>
 #include <LittleFS.h>
+#include <ArduinoJson.h>
 
 // Forward declarations
 class KeyerLogic;
@@ -23,9 +24,15 @@ public:
 
 private:
     AsyncWebServer _server;
+    AsyncWebSocket _ws;
     KeyerLogic* _keyer;
     SidetoneGenerator* _sidetone;
     ConfigManager* _configMgr;
+
+    // WebSocket timeline streaming
+    TaskHandle_t _wsTaskHandle;
+    static void wsTask(void* parameter);
+    void sendTimelineEvents();
 
     // Setup routes
     void setupRoutes();
