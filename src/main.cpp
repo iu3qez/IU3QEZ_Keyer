@@ -1,20 +1,41 @@
 #include <Arduino.h>
+#include "settings.h"
 #include "gpio_config.h"
 #include "neopixel_debug.h"
 #include "sidetone_generator.h"
 #include "power_amp.h"
+#include "keyer_logic.h"
 #include "i2c_scanner.h"
+#include "wifi_manager.h"
+#include "web_server.h"
+#include "config_manager.h"
 
 GPIO_Config gpio;
 NeoPixel_Debug neopixel;
 SidetoneGenerator sidetone;
 PowerAmplifier powerAmp;
+KeyerLogic keyer;
+ConfigManager configMgr;
+WiFiManager wifiManager;
+WebServerManager webServer(&keyer, &sidetone, &configMgr);
 
-// Task FreeRTOS per generazione audio su Core 1
-void audioTask(void* parameter) {
-  while (true) {
-    sidetone.task();
-    // Yielding automatico in task() durante i2s_write blocking
+// Callback keyer: chiamato quando cambia stato keying
+void keyerCallback(bool keying) {
+  // Imposta uscita KEY
+  gpio.setKeyOutput(keying);
+
+  // Controlla sidetone
+  if (keying) {
+    sidetone.start();
+  } else {
+    sidetone.stop();
+  }
+
+  // Aggiorna NeoPixel (stato visivo semplificato)
+  if (keying) {
+    neopixel.setState(STATE_KEYING_DOT);  // TODO: distinguere DOT/DASH
+  } else {
+    neopixel.setState(STATE_IDLE);
   }
 }
 
@@ -44,8 +65,8 @@ void setup() {
 
   // STEP 4: Inizializza I2C Wire per ES8311 e TCA9555
   Serial.println("STEP 4/5: I2C init...");
-  Serial.println("Inizializzando Wire su GPIO11/10 (SDA/SCL)...");
-  Wire.begin(11, 10);  // SDA=GPIO11, SCL=GPIO10
+  Serial.printf("Inizializzando Wire su GPIO%d/%d (SDA/SCL)...\n", I2C_SDA_PIN, I2C_SCL_PIN);
+  Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
   delay(100);
   Serial.println("Wire I2C inizializzato");
   Serial.flush();
@@ -58,8 +79,17 @@ void setup() {
     Serial.println("ES8311 inizializzato con successo!");
   }
 
-  sidetone.setFrequency(600);
-  sidetone.setVolume(80);
+  // Inizializza ConfigManager e carica configurazione da NVS
+  Serial.println("\nInizializzazione ConfigManager...");
+  if (!configMgr.begin()) {
+    Serial.println("ERRORE: ConfigManager init fallito!");
+  } else {
+    configMgr.load();  // Carica da NVS o usa defaults
+    Serial.println("ConfigManager inizializzato");
+  }
+
+  // Applica configurazione iniziale a sidetone
+  configMgr.applyToSidetone(&sidetone);
 
   // Inizializza Power Amplifier (usa I2C già inizializzato)
   Serial.println("\nInizializzazione Power Amplifier...");
@@ -70,90 +100,88 @@ void setup() {
     Serial.println("Power Amplifier ABILITATO");
   }
 
-  // TASK AUDIO DISABILITATO - race condition tra core
-  // Scriviamo I2S direttamente dal loop di Core 0
-  Serial.println("\nATTENZIONE: I2S gestito da Core 0 (evita race condition)");
+  // Avvia task audio su Core 1
+  Serial.println("\nAvvio audio task su Core 1...");
+  if (!sidetone.startAudioTask()) {
+    Serial.println("ERRORE: Avvio audio task fallito!");
+  } else {
+    Serial.println("Audio task su Core 1 avviato con successo");
+  }
+
+  // Inizializza Keyer Logic con timer hardware
+  Serial.println("\nInizializzazione Keyer Logic...");
+  if (!keyer.begin(keyerCallback)) {
+    Serial.println("ERRORE: Inizializzazione keyer fallita!");
+  } else {
+    // Applica configurazione salvata
+    configMgr.applyToKeyer(&keyer);
+    Serial.println("Keyer Logic inizializzato con successo");
+    keyer.printStatus();
+  }
+
+  // Inizializza WiFi Access Point
+  Serial.println("\nInizializzazione WiFi AP...");
+  if (!wifiManager.begin()) {
+    Serial.println("ERRORE: WiFi AP init fallito!");
+  } else {
+    Serial.println("WiFi AP avviato con successo");
+  }
+
+  // Inizializza Web Server
+  Serial.println("\nInizializzazione Web Server...");
+  if (!webServer.begin()) {
+    Serial.println("ERRORE: Web Server init fallito!");
+  } else {
+    Serial.println("Web Server avviato con successo");
+    Serial.printf("Accedi a: http://%s\n", wifiManager.getIP().toString().c_str());
+  }
 
   Serial.println("\nSTEP 5/5: Setup completato!");
-  Serial.println("Premere paddle per test audio...\n");
+  Serial.println("Architettura:");
+  Serial.println("  Core 0: Timer ISR (keyer logic) + GPIO ISR (paddle)");
+  Serial.println("  Core 1: I2S audio generation task + WiFi/WebServer");
+  Serial.println("  Curtis Mode B con finestra memoria attiva");
+  Serial.println("Premere paddle per test CW...\n");
+  Serial.printf("Web Interface: http://%s\n\n", wifiManager.getIP().toString().c_str());
   Serial.flush();
 }
 
 void loop() {
-  static uint32_t loopCount = 0;
   static uint32_t lastPrint = 0;
   static uint32_t lastNeoPixel = 0;
-  static bool lastTestInput = false;
+  static uint32_t lastStatusPrint = 0;
+  static uint32_t lastPaddleDebug = 0;
 
-  loopCount++;
-
-  // Alimenta watchdog per evitare crash
+  // Alimenta watchdog
   yield();
 
-  // TEST TCA9555: Leggi Extend_IO10 (P1.1)
-  bool testInput = powerAmp.readTestInput();
-  if (testInput != lastTestInput) {
-    Serial.printf("TCA9555 Extend_IO10: %s\n", testInput ? "HIGH" : "LOW");
+  // DEBUG: Stampa stato paddle ogni 2 secondi
+  if (millis() - lastPaddleDebug > 2000) {
+    bool dot_raw = (digitalRead(DOT_PIN) == LOW);
+    bool dash_raw = (digitalRead(DASH_PIN) == LOW);
+    Serial.printf("[DEBUG] RAW: DOT=%d DASH=%d | ISR: _dot=%d _dash=%d | ISR_count: DOT=%lu DASH=%lu | State=%d Key=%d\n",
+                  dot_raw, dash_raw,
+                  keyer.getDotPressed(), keyer.getDashPressed(),
+                  keyer.getDotISRCount(), keyer.getDashISRCount(),
+                  keyer.getState(), keyer.isKeying());
     Serial.flush();
-    lastTestInput = testInput;
+    lastPaddleDebug = millis();
   }
 
-  // Stampa heartbeat ogni 10 secondi (ridotto da 5 per sicurezza)
+  // Stampa heartbeat ogni 10 secondi
   if (millis() - lastPrint > 10000) {
-    Serial.printf("Loop alive: %lu iter\n", loopCount);
+    Serial.printf("Keyer running: %d WPM\n", keyer.getWPM());
     Serial.flush();
     lastPrint = millis();
-    loopCount = 0;  // Reset counter per evitare overflow
   }
 
-  // Test lettura paddle (raw, senza debouncing)
-  static bool lastDot = false;
-  static bool lastDash = false;
-  static bool lastKeying = false;
-
-  bool dot = gpio.readDotPaddle();
-  bool dash = gpio.readDashPaddle();
-  bool keying = dot || dash;
-
-  // Determina stato per NeoPixel
-  KeyerState state = STATE_IDLE;
-  if (dot && dash) {
-    state = STATE_BOTH_PRESSED;
-  } else if (dot) {
-    state = STATE_DOT_PRESSED;
-  } else if (dash) {
-    state = STATE_DASH_PRESSED;
-  }
-  neopixel.setState(state);
-
-  // Debug paddle state changes (con flush per evitare buffer overflow)
-  if (dot != lastDot) {
-    Serial.printf("DOT: %s\n", dot ? "PRESS" : "REL");
-    Serial.flush();
-    lastDot = dot;
-  }
-
-  if (dash != lastDash) {
-    Serial.printf("DASH: %s\n", dash ? "PRESS" : "REL");
-    Serial.flush();
-    lastDash = dash;
-  }
-
-  // Sincronizza key output e sidetone
-  if (keying != lastKeying) {
-    gpio.setKeyOutput(keying);
-
-    if (keying) {
-      sidetone.start();  // Attiva sidetone
-    } else {
-      sidetone.stop();   // Disattiva sidetone
+  // Stampa status dettagliato ogni 30 secondi (solo se attivo)
+  if (millis() - lastStatusPrint > 30000) {
+    if (keyer.isKeying()) {
+      keyer.printStatus();
     }
-
-    lastKeying = keying;
+    lastStatusPrint = millis();
   }
-
-  // Alimenta I2S (scrive samples anche quando sidetone è off = silenzio)
-  sidetone.task();
 
   // Aggiorna NeoPixel solo ogni 20ms per ridurre carico
   if (millis() - lastNeoPixel > 20) {
@@ -161,6 +189,9 @@ void loop() {
     lastNeoPixel = millis();
   }
 
-  // NIENTE delay() - i2s_write già introduce delay sufficiente
-  // delay(20);
+  // Keyer logic gira su Timer ISR + GPIO ISR
+  // Audio task gira su Core 1
+  // Questo loop è solo per housekeeping
+
+  delay(10);  // Rilascia CPU
 }

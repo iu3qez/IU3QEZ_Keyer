@@ -6,12 +6,21 @@
 static es8311_handle_t es8311_handle = NULL;
 
 SidetoneGenerator::SidetoneGenerator()
-    : _frequency(600), _volume(80), _playing(false),
-      _phase_accumulator(0), _phase_increment(0) {
+    : _frequency(SIDETONE_FREQ_HZ), _volume(SIDETONE_VOLUME), _playing(false),
+      _phase_accumulator(0), _phase_increment(0),
+      _envelope_state(ENV_IDLE), _envelope_sample_count(0),
+      _audioTaskHandle(NULL), _mutex(NULL) {
 }
 
 bool SidetoneGenerator::begin() {
     Serial.println("Inizializzazione Sidetone Generator...");
+
+    // Crea mutex per sincronizzazione tra core
+    _mutex = xSemaphoreCreateMutex();
+    if (_mutex == NULL) {
+        Serial.println("ERRORE: Creazione mutex fallita");
+        return false;
+    }
 
     // Genera wavetable sinusoidale
     generateWavetable();
@@ -39,7 +48,7 @@ bool SidetoneGenerator::begin() {
 bool SidetoneGenerator::initES8311() {
     Serial.println("Inizializzazione ES8311 codec (libreria demo)...");
     Serial.printf("  I2C pins: SDA=%d, SCL=%d, addr=0x%02X\n",
-                  ES8311_SDA_PIN, ES8311_SCL_PIN, ES8311_I2C_ADDR);
+                  I2C_SDA_PIN, I2C_SCL_PIN, ES8311_I2C_ADDR);
 
     // Wire già inizializzato da main.cpp
     // Libreria ES8311 usa Wire internamente
@@ -107,9 +116,11 @@ void SidetoneGenerator::generateWavetable() {
 }
 
 void SidetoneGenerator::calculatePhaseIncrement() {
-    // Phase increment = (frequency * wavetable_size * 2^32) / sample_rate
+    // Phase increment = (frequency * 2^32) / sample_rate
+    // Il phase accumulator a 32-bit rappresenta UN ciclo completo (0-2^32)
+    // La wavetable viene letta con i top 6 bit (shift 26)
     // Usando aritmetica a 64-bit per evitare overflow
-    uint64_t increment = ((uint64_t)_frequency * WAVETABLE_SIZE * 0x100000000ULL) / I2S_SAMPLE_RATE;
+    uint64_t increment = ((uint64_t)_frequency * 0x100000000ULL) / I2S_SAMPLE_RATE;
     _phase_increment = (uint32_t)increment;
 }
 
@@ -166,9 +177,9 @@ bool SidetoneGenerator::initI2S() {
 }
 
 void SidetoneGenerator::setFrequency(uint16_t freq_hz) {
-    // Limita range 400-600 Hz
-    if (freq_hz < 400) freq_hz = 400;
-    if (freq_hz > 600) freq_hz = 600;
+    // Limita range 300-800 Hz
+    if (freq_hz < 300) freq_hz = 300;
+    if (freq_hz > 800) freq_hz = 800;
 
     _frequency = freq_hz;
     calculatePhaseIncrement();
@@ -183,30 +194,64 @@ void SidetoneGenerator::setVolume(uint8_t volume) {
 }
 
 void SidetoneGenerator::start() {
-    if (!_playing) {
-        _playing = true;
-        _phase_accumulator = 0;  // Reset phase
-        Serial.println("Sidetone START");
-        Serial.flush();
+    // Proteggi accesso con mutex (chiamato da ISR via callback - NO Serial.print!)
+    if (xSemaphoreTake(_mutex, portMAX_DELAY) == pdTRUE) {
+        if (!_playing) {
+            _playing = true;
+            _phase_accumulator = 0;  // Reset phase
+            _envelope_state = ENV_RAMP_UP;
+            _envelope_sample_count = 0;
+            // RIMOSSO: Serial.println() non sicuro in contesto ISR
+        }
+        xSemaphoreGive(_mutex);
     }
 }
 
 void SidetoneGenerator::stop() {
-    if (_playing) {
-        _playing = false;
-
-        // Invia silenzio per pulire buffer I2S
-        int16_t silence[64] = {0};
-        size_t bytes_written;
-        i2s_write(I2S_NUM, silence, sizeof(silence), &bytes_written, 10);
-
-        Serial.println("Sidetone STOP");
-        Serial.flush();
+    // Proteggi accesso con mutex (chiamato da ISR via callback - NO Serial.print!)
+    if (xSemaphoreTake(_mutex, portMAX_DELAY) == pdTRUE) {
+        if (_playing) {
+            // Non fermare subito, inizia ramp down
+            if (_envelope_state != ENV_RAMP_DOWN) {
+                _envelope_state = ENV_RAMP_DOWN;
+                _envelope_sample_count = 0;
+                // RIMOSSO: Serial.println() non sicuro in contesto ISR
+            }
+        }
+        xSemaphoreGive(_mutex);
     }
 }
 
 bool SidetoneGenerator::isPlaying() {
     return _playing;
+}
+
+float SidetoneGenerator::getEnvelopeGain() {
+    float gain = 0.0f;
+
+    switch (_envelope_state) {
+        case ENV_IDLE:
+            gain = 0.0f;
+            break;
+
+        case ENV_RAMP_UP:
+            // Linear ramp 0 -> 1.0
+            gain = (float)_envelope_sample_count / RAMP_UP_SAMPLES;
+            if (gain > 1.0f) gain = 1.0f;
+            break;
+
+        case ENV_SUSTAIN:
+            gain = 1.0f;
+            break;
+
+        case ENV_RAMP_DOWN:
+            // Linear ramp 1.0 -> 0
+            gain = 1.0f - ((float)_envelope_sample_count / RAMP_DOWN_SAMPLES);
+            if (gain < 0.0f) gain = 0.0f;
+            break;
+    }
+
+    return gain;
 }
 
 void SidetoneGenerator::writeSamples(size_t num_samples) {
@@ -219,22 +264,36 @@ void SidetoneGenerator::writeSamples(size_t num_samples) {
     for (size_t i = 0; i < num_samples; i++) {
         int16_t sample;
 
-        if (_playing) {
+        if (_playing || _envelope_state != ENV_IDLE) {
             // Leggi dalla wavetable usando phase accumulator
-            uint32_t table_index = (_phase_accumulator >> 24) & (WAVETABLE_SIZE - 1);
+            // Shift = 32 - log2(WAVETABLE_SIZE) = 32 - 6 = 26 bit
+            uint32_t table_index = (_phase_accumulator >> 26) & (WAVETABLE_SIZE - 1);
             sample = _wavetable[table_index];
 
             // Applica volume
             sample = (sample * _volume) / 100;
 
+            // Applica envelope per rampe anti-click
+            float envelope_gain = getEnvelopeGain();
+            sample = (int16_t)(sample * envelope_gain);
+
             // Avanza phase accumulator
             _phase_accumulator += _phase_increment;
 
-            // Debug ogni 1000 samples
-            if (debugCount++ % 1000 == 0) {
-                Serial.printf("I2S sample: %d (idx=%lu)\n", sample, table_index);
-                Serial.flush();
+            // Aggiorna envelope state machine
+            _envelope_sample_count++;
+
+            if (_envelope_state == ENV_RAMP_UP && _envelope_sample_count >= RAMP_UP_SAMPLES) {
+                _envelope_state = ENV_SUSTAIN;
+                _envelope_sample_count = 0;
+            } else if (_envelope_state == ENV_RAMP_DOWN && _envelope_sample_count >= RAMP_DOWN_SAMPLES) {
+                _envelope_state = ENV_IDLE;
+                _envelope_sample_count = 0;
+                _playing = false;  // Ora effettivamente fermo
+                // RIMOSSO: Serial.print da task audio per evitare race con loop
             }
+
+            // RIMOSSO: Debug Serial da task audio (race condition con loop)
         } else {
             sample = 0;  // Silenzio
         }
@@ -249,8 +308,40 @@ void SidetoneGenerator::writeSamples(size_t num_samples) {
     i2s_write(I2S_NUM, samples, num_samples * 2 * sizeof(int16_t), &bytes_written, portMAX_DELAY);
 }
 
+bool SidetoneGenerator::startAudioTask() {
+    // Crea task su Core 1 (Application Core)
+    BaseType_t result = xTaskCreatePinnedToCore(
+        audioTaskWrapper,      // Funzione task
+        "AudioTask",           // Nome task
+        4096,                  // Stack size
+        this,                  // Parametro (puntatore a this)
+        1,                     // Priorità (1 = normale)
+        &_audioTaskHandle,     // Handle task
+        1                      // Core 1 (Application Core)
+    );
+
+    if (result != pdPASS) {
+        Serial.println("ERRORE: Creazione audio task fallita");
+        return false;
+    }
+
+    Serial.println("Audio task avviato su Core 1");
+    return true;
+}
+
+void SidetoneGenerator::audioTaskWrapper(void* parameter) {
+    // Wrapper statico che chiama il metodo di istanza
+    SidetoneGenerator* instance = static_cast<SidetoneGenerator*>(parameter);
+
+    while (true) {
+        instance->task();
+        // Yielding implicito durante i2s_write blocking
+    }
+}
+
 void SidetoneGenerator::task() {
-    // Task da chiamare ciclicamente (su Core 1)
+    // Task eseguito continuamente su Core 1
     // Genera e invia 64 samples per chiamata
+    // Mutex NON necessario per lettura di _playing (volatile)
     writeSamples(64);
 }

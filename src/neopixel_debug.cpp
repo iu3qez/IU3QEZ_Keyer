@@ -5,7 +5,7 @@ NeoPixel_Debug::NeoPixel_Debug()
 }
 
 void NeoPixel_Debug::begin() {
-    FastLED.addLeds<WS2812B, BLINK_GPIO, GRB>(_leds, NUM_LEDS);
+    FastLED.addLeds<WS2812, NEOPIXEL_PIN, GRB>(_leds, NUM_LEDS);
     FastLED.setBrightness(LED_BRIGHTNESS);
 
     // Test iniziale: arcobaleno rapido
@@ -16,7 +16,7 @@ void NeoPixel_Debug::begin() {
     delay(500);
 
     clear();
-    Serial.printf("NeoPixel Debug: %d LEDs on GPIO%d\n", NUM_LEDS, BLINK_GPIO);
+    Serial.printf("NeoPixel Debug: %d LEDs on GPIO%d\n", NUM_LEDS, NEOPIXEL_PIN);
 }
 
 void NeoPixel_Debug::setState(KeyerState state) {

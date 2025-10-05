@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IU3QEZ CW HST Keyer</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>IU3QEZ CW HST Keyer</h1>
+            <p class="subtitle">High Speed Telegraphy Control Panel</p>
+        </header>
+
+        <!-- Status Display -->
+        <section class="status-section">
+            <h2>Status</h2>
+            <div class="status-grid">
+                <div class="status-item">
+                    <span class="status-label">WPM:</span>
+                    <span class="status-value" id="status-wpm">--</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">Mode:</span>
+                    <span class="status-value" id="status-mode">--</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">State:</span>
+                    <span class="status-value" id="status-state">--</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">Keying:</span>
+                    <span class="status-indicator" id="status-keying">
+                        <span class="led" id="keying-led"></span>
+                        <span id="keying-text">OFF</span>
+                    </span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">DOT:</span>
+                    <span class="status-indicator">
+                        <span class="led" id="dot-led"></span>
+                        <span id="dot-text">UP</span>
+                    </span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">DASH:</span>
+                    <span class="status-indicator">
+                        <span class="led" id="dash-led"></span>
+                        <span id="dash-text">UP</span>
+                    </span>
+                </div>
+            </div>
+        </section>
+
+        <!-- Configuration Form -->
+        <section class="config-section">
+            <h2>Configuration</h2>
+            <form id="config-form">
+                <!-- WPM -->
+                <div class="form-group">
+                    <label for="wpm">Speed (WPM)</label>
+                    <div class="range-input">
+                        <input type="range" id="wpm" name="wpm" min="5" max="100" value="20" step="1">
+                        <input type="number" id="wpm-value" min="5" max="100" value="20" step="1">
+                    </div>
+                    <span class="help-text">5 - 100 WPM</span>
+                </div>
+
+                <!-- Mode -->
+                <div class="form-group">
+                    <label for="mode">Keyer Mode</label>
+                    <select id="mode" name="mode">
+                        <option value="0">Straight Key</option>
+                        <option value="1">Iambic Mode A</option>
+                        <option value="2" selected>Iambic Mode B (Curtis)</option>
+                        <option value="3">Ultimatic</option>
+                    </select>
+                    <span class="help-text">Curtis Mode B recommended for HST</span>
+                </div>
+
+                <!-- Memory Window UP -->
+                <div class="form-group">
+                    <label for="window-up">Memory Window UP (%)</label>
+                    <div class="range-input">
+                        <input type="range" id="window-up" name="window_up" min="0" max="99" value="45" step="1">
+                        <input type="number" id="window-up-value" min="0" max="99" value="45" step="1">
+                    </div>
+                    <span class="help-text">Apertura finestra memoria (0-99%)</span>
+                </div>
+
+                <!-- Memory Window DOWN -->
+                <div class="form-group">
+                    <label for="window-down">Memory Window DOWN (%)</label>
+                    <div class="range-input">
+                        <input type="range" id="window-down" name="window_down" min="0" max="99" value="5" step="1">
+                        <input type="number" id="window-down-value" min="0" max="99" value="5" step="1">
+                    </div>
+                    <span class="help-text">Chiusura finestra memoria dall'inizio fine (0-99%)</span>
+                </div>
+
+                <!-- Paddle Debounce -->
+                <div class="form-group">
+                    <label for="debounce">Paddle Debounce (μs)</label>
+                    <div class="range-input">
+                        <input type="range" id="debounce" name="debounce" min="100" max="10000" value="1000" step="100">
+                        <input type="number" id="debounce-value" min="100" max="10000" value="1000" step="100">
+                    </div>
+                    <span class="help-text">Debouncing paddle (100-10000 μs)</span>
+                </div>
+
+                <!-- Sidetone Volume -->
+                <div class="form-group">
+                    <label for="volume">Sidetone Volume (%)</label>
+                    <div class="range-input">
+                        <input type="range" id="volume" name="volume" min="0" max="100" value="70" step="5">
+                        <input type="number" id="volume-value" min="0" max="100" value="70" step="5">
+                    </div>
+                    <span class="help-text">Volume audio sidetone (0-100%)</span>
+                </div>
+
+                <!-- Sidetone Frequency -->
+                <div class="form-group">
+                    <label for="frequency">Sidetone Frequency (Hz)</label>
+                    <div class="range-input">
+                        <input type="range" id="frequency" name="frequency" min="300" max="800" value="600" step="10">
+                        <input type="number" id="frequency-value" min="300" max="800" value="600" step="10">
+                    </div>
+                    <span class="help-text">Frequenza tono audio (300-800 Hz)</span>
+                </div>
+
+                <!-- Buttons -->
+                <div class="form-actions">
+                    <button type="button" class="btn btn-primary" id="btn-save">Save to Flash</button>
+                    <button type="button" class="btn btn-secondary" id="btn-reset">Reset to Defaults</button>
+                    <button type="button" class="btn btn-secondary" id="btn-refresh">Refresh</button>
+                </div>
+                <p class="help-text">Slider changes apply immediately. Click "Save to Flash" to persist configuration after reboot.</p>
+            </form>
+
+            <div id="message" class="message"></div>
+        </section>
+
+        <!-- Future: Timeline visualization will go here -->
+        <section class="timeline-section" style="display: none;">
+            <h2>Timeline (Coming Soon)</h2>
+            <canvas id="timeline-canvas"></canvas>
+        </section>
+
+        <footer>
+            <p>IU3QEZ CW HST Keyer &copy; 2025 | ESP32-S3 Audio Board</p>
+        </footer>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>

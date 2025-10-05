@@ -9,23 +9,23 @@ void GPIO_Config::begin() {
     // configureStatusLED();  // Disabilitato
 
     Serial.println("GPIO Configuration:");
-    Serial.printf("  Paddle DOT  : GPIO%d (input, pull-up)\n", PIN_PADDLE_DOT);
-    Serial.printf("  Paddle DASH : GPIO%d (input, pull-up)\n", PIN_PADDLE_DASH);
-    Serial.printf("  Key Output  : GPIO%d (output)\n", PIN_KEY_OUTPUT);
+    Serial.printf("  Paddle DOT  : GPIO%d (input, pull-up)\n", DOT_PIN);
+    Serial.printf("  Paddle DASH : GPIO%d (input, pull-up)\n", DASH_PIN);
+    Serial.printf("  Key Output  : GPIO%d (output)\n", KEY_PIN);
     // Serial.printf("  Status LED  : disabilitato\n");
 }
 
 void GPIO_Config::configurePaddleInputs() {
     // Configura paddle inputs come INPUT_PULLUP
     // I paddle chiudono a massa quando premuti (active LOW)
-    pinMode(PIN_PADDLE_DOT, INPUT_PULLUP);
-    pinMode(PIN_PADDLE_DASH, INPUT_PULLUP);
+    pinMode(DOT_PIN, INPUT_PULLUP);
+    pinMode(DASH_PIN, INPUT_PULLUP);
 }
 
 void GPIO_Config::configureKeyOutput() {
     // Configura key output come OUTPUT, inizialmente LOW (non keying)
-    pinMode(PIN_KEY_OUTPUT, OUTPUT);
-    digitalWrite(PIN_KEY_OUTPUT, LOW);
+    pinMode(KEY_PIN, OUTPUT);
+    digitalWrite(KEY_PIN, LOW);
 }
 
 void GPIO_Config::configureStatusLED() {
