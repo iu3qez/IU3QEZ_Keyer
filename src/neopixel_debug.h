@@ -3,9 +3,8 @@
 
 #include <Arduino.h>
 #include <FastLED.h>
+#include "settings.h"
 
-#define BLINK_GPIO      38
-#define NUM_LEDS        7
 #define LED_BRIGHTNESS  50  // 0-255
 
 // Stati visivi del keyer

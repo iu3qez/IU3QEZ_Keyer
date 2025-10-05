@@ -3,12 +3,7 @@
 
 #include <Arduino.h>
 #include <Wire.h>
-
-// TCA9555 I2C address (trovato da scan: 0x20)
-#define TCA9555_ADDR    0x20
-
-// TCA9555 è sullo STESSO bus di ES8311 (GPIO10/11)
-// NON su GPIO19/20 che sono per la camera!
+#include "settings.h"
 
 // TCA9555 Register addresses
 #define TCA9555_INPUT_PORT0     0x00
@@ -20,14 +15,9 @@
 #define TCA9555_CONFIG_PORT0    0x06
 #define TCA9555_CONFIG_PORT1    0x07
 
-// Pin mapping
-// TCA9555 ha 2 porte da 8 pin: P0.0-P0.7 e P1.0-P1.7
-// Extend_IO1-8 = P0.0-P0.7
-// Extend_IO9-16 = P1.0-P1.7
-// Extend_IO7 = P0.6 (porta 0, pin 6) -> I2C/USB selector (deve essere HIGH per I2C)
-// Extend_IO9 = P1.0 (porta 1, pin 0) -> PA_CTRL
-#define I2C_USB_SEL_PIN 6  // P0.6 (Extend_IO7) - HIGH=I2C, LOW=USB
-#define PA_ENABLE_PIN   0  // P1.0 (Extend_IO9) - CORRETTO!
+// Pin mapping TCA9555:
+// Extend_IO7 = P0.6 (I2C_USB_SEL_PIN) -> I2C/USB selector (HIGH per I2C)
+// Extend_IO8 = P1.0 (PA_ENABLE_PIN) -> Power Amplifier enable
 
 class PowerAmplifier {
 public:
