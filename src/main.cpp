@@ -5,6 +5,7 @@
 #include "sidetone_generator.h"
 #include "power_amp.h"
 #include "keyer_logic.h"
+#include "morse_decoder.h"
 #include "i2c_scanner.h"
 #include "wifi_manager.h"
 #include "web_server.h"
@@ -15,6 +16,7 @@ NeoPixel_Debug neopixel;
 SidetoneGenerator sidetone;
 PowerAmplifier powerAmp;
 KeyerLogic keyer;
+MorseDecoder decoder(keyer.getTimelineBuffer());  // Decoder legge timeline da keyer
 ConfigManager configMgr;
 WiFiManager wifiManager;
 WebServerManager webServer(&keyer, &sidetone, &configMgr);
@@ -119,6 +121,16 @@ void setup() {
     keyer.printStatus();
   }
 
+  // Inizializza Morse Decoder (dopo keyer, usa timeline del keyer)
+  Serial.println("\nInizializzazione Morse Decoder...");
+  if (!decoder.begin()) {
+    Serial.println("ERRORE: Decoder init fallito!");
+  } else {
+    // Applica configurazione salvata
+    configMgr.applyToDecoder(&decoder);
+    Serial.println("Morse Decoder inizializzato con successo");
+  }
+
   // Inizializza WiFi Access Point
   Serial.println("\nInizializzazione WiFi AP...");
   if (!wifiManager.begin()) {
@@ -151,9 +163,19 @@ void loop() {
   static uint32_t lastNeoPixel = 0;
   static uint32_t lastStatusPrint = 0;
   static uint32_t lastPaddleDebug = 0;
+  static uint32_t lastDecoderSync = 0;
 
   // Alimenta watchdog
   yield();
+
+  // Processo decoder (legge timeline e rileva spazi)
+  decoder.process();
+
+  // Sync DOT duration al decoder ogni secondo (se WPM cambia)
+  if (millis() - lastDecoderSync > 1000) {
+    decoder.setDotDuration(keyer.getDotDuration());
+    lastDecoderSync = millis();
+  }
 
   // DEBUG: Stampa stato paddle ogni 2 secondi
   if (millis() - lastPaddleDebug > 2000) {

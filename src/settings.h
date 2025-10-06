@@ -97,6 +97,29 @@
                                      // 1 tick = 1 microsecondo
 
 // ============================================================================
+// MORSE DECODER - SPACE DETECTION
+// ============================================================================
+
+// Tolleranze per rilevamento spazi (percentuale)
+// Inter-character space: 3 DOT ± tolleranza
+// Inter-word space: 7 DOT ± tolleranza
+
+#define DECODER_CHAR_SPACE_TOLERANCE  20  // Tolleranza % per spazio carattere (default 20%)
+#define DECODER_WORD_SPACE_TOLERANCE  20  // Tolleranza % per spazio parola (default 20%)
+
+// Esempi con 20% tolleranza:
+// - Spazio carattere (3 DOT): accetta 2.4 - 3.6 DOT
+// - Spazio parola (7 DOT): accetta 5.6 - 8.4 DOT
+//
+// Con tolleranza ridotta (10%):
+// - Spazio carattere: 2.7 - 3.3 DOT (più preciso, richiede timing migliore)
+// - Spazio parola: 6.3 - 7.7 DOT
+//
+// Con tolleranza aumentata (30%):
+// - Spazio carattere: 2.1 - 3.9 DOT (più permissivo, timing rilassato)
+// - Spazio parola: 4.9 - 9.1 DOT
+
+// ============================================================================
 // WIFI CONFIGURATION
 // ============================================================================
 
