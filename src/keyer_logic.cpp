@@ -177,16 +177,11 @@ void KeyerLogic::processNextElement() {
         startElement(next_element);
     } else {
         // Nessun elemento: torna IDLE
+        // NOTA: KEY_OFF già emesso in DOT/DASH_ACTIVE quando elemento finisce
+        // Non riemetterlo qui per evitare duplicati
         _state = KEYER_IDLE;
         _current_element = ELEMENT_NONE;
         _keying = false;
-
-        // Cattura evento timeline KEY_OFF
-        _timeline.push(EVENT_KEY_OFF);
-
-        if (_callback) {
-            _callback(false);
-        }
     }
 }
 
