@@ -1,4 +1,4 @@
-// IU3QEZ CW HST Keyer - Web Interface JavaScript
+// IU3QEZ CW QRS2HST Keyer - Web Interface JavaScript
 
 const API_BASE = '';
 const STATUS_REFRESH_INTERVAL = 500; // ms

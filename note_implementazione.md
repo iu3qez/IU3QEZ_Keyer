@@ -1,4 +1,4 @@
-Specifiche Keyer CW HST - ESP32-S3-AUDIO-Board
+Specifiche Keyer CW QRS2HST - ESP32-S3-AUDIO-Board
 Hardware
 
 Board: ESP32-S3-AUDIO-Board
