@@ -2,6 +2,7 @@
 #define MORSE_DECODER_H
 
 #include <Arduino.h>
+#include <map>
 #include "timeline_buffer.h"
 #include "settings.h"
 
@@ -68,9 +69,12 @@ private:
     bool _key_is_down;              // Stato corrente KEY (true se premuto)
     uint32_t _dot_duration_us;      // Durata DOT corrente (da KeyerLogic WPM)
 
-    // Future: pattern recognition
+    // Pattern recognition
     String _current_char_pattern;   // Pattern corrente in costruzione (".-.-" etc)
     uint32_t _last_element_start_us;
+
+    // Lookup table pattern → carattere
+    std::map<String, char> _morse_table;
 
     // Statistiche
     uint32_t _char_spaces_detected;
@@ -79,6 +83,10 @@ private:
     // Helper per space detection
     void detectSpace(uint32_t pause_duration_us, uint32_t timestamp_us);
     bool isInRange(uint32_t value, uint32_t target, uint8_t tolerance_percent);
+
+    // Helper per pattern recognition
+    void initMorseTable();
+    char decodePattern(const String& pattern);
 };
 
 #endif // MORSE_DECODER_H

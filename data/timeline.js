@@ -62,6 +62,10 @@ class TimelineRenderer {
         this.animationId = null;
         this.lastRenderTime = 0;
 
+        // Decoded text
+        this.decodedText = '';
+        this.decodedTextElement = null;
+
         this.initCanvas();
     }
 
@@ -138,6 +142,12 @@ class TimelineRenderer {
         }
 
         data.events.forEach(evt => {
+            // Handle decoded characters
+            if (evt.type === 'DECODED_CHAR') {
+                this.handleDecodedChar(evt.char);
+                return;  // Non aggiungiamo DECODED_CHAR alla timeline grafica
+            }
+
             // Store event with absolute timestamp (microseconds)
             this.events.push({
                 type: evt.type,
@@ -157,6 +167,33 @@ class TimelineRenderer {
 
         // Clean old events
         this.cleanOldEvents();
+    }
+
+    handleDecodedChar(char) {
+        // Aggiungi carattere al testo decodificato
+        this.decodedText += char;
+
+        // Limita lunghezza (ultimi 200 caratteri)
+        if (this.decodedText.length > 200) {
+            this.decodedText = this.decodedText.substring(this.decodedText.length - 200);
+        }
+
+        // Aggiorna display HTML
+        this.updateDecodedTextDisplay();
+    }
+
+    updateDecodedTextDisplay() {
+        if (!this.decodedTextElement) {
+            this.decodedTextElement = document.getElementById('decoded-text-output');
+        }
+
+        if (this.decodedTextElement) {
+            if (this.decodedText.length === 0) {
+                this.decodedTextElement.textContent = 'Waiting for input...';
+            } else {
+                this.decodedTextElement.textContent = this.decodedText;
+            }
+        }
     }
 
     updateState(eventType) {

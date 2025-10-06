@@ -11,6 +11,35 @@ void IRAM_ATTR TimelineBuffer::push(TimelineEventType type, TimelineEventFlags f
     push(type, flags, micros());
 }
 
+void IRAM_ATTR TimelineBuffer::pushExtended(TimelineEventTypeExtended type_ext, uint8_t payload) {
+    pushExtended(type_ext, payload, micros());
+}
+
+void IRAM_ATTR TimelineBuffer::pushExtended(TimelineEventTypeExtended type_ext, uint8_t payload, uint32_t timestamp_us) {
+    // Lockfree push: singolo writer (ISR), singolo reader (task)
+    uint32_t head = _head;
+    uint32_t next_head = wrapIndex(head + 1);
+
+    // Check se buffer pieno (head raggiunge tail)
+    if (next_head == _tail) {
+        // Buffer pieno: overwrite policy (sovrascrive evento più vecchio)
+        _tail = wrapIndex(_tail + 1);  // Avanza tail
+        _overruns++;
+        _total_dropped++;
+    }
+
+    // Scrivi evento esteso
+    _buffer[head].timestamp_us = timestamp_us;
+    _buffer[head].type = (TimelineEventType)0;  // Nessun evento base
+    _buffer[head].flags = FLAG_NONE;
+    _buffer[head].type_extended = type_ext;
+    _buffer[head].payload = payload;
+
+    // Avanza head (memory barrier implicito su ESP32)
+    _head = next_head;
+    _total_pushed++;
+}
+
 void IRAM_ATTR TimelineBuffer::push(TimelineEventType type, TimelineEventFlags flags, uint32_t timestamp_us) {
     // Lockfree push: singolo writer (ISR), singolo reader (task)
     uint32_t head = _head;
@@ -28,6 +57,8 @@ void IRAM_ATTR TimelineBuffer::push(TimelineEventType type, TimelineEventFlags f
     _buffer[head].timestamp_us = timestamp_us;
     _buffer[head].type = type;
     _buffer[head].flags = flags;
+    _buffer[head].type_extended = 0;  // Inizializza a zero
+    _buffer[head].payload = 0;        // Inizializza a zero
 
     // Avanza head (memory barrier implicito su ESP32)
     _head = next_head;

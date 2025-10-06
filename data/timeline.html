@@ -82,10 +82,45 @@
             height: 100vh;
             background: #2c3e50;
         }
+
+        .decoded-text {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            right: 20px;
+            background: rgba(44, 62, 80, 0.95);
+            padding: 20px;
+            border-radius: 8px;
+            z-index: 100;
+            font-family: 'Courier New', monospace;
+            font-size: 1.5rem;
+            letter-spacing: 0.1em;
+            min-height: 80px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+        }
+
+        .decoded-text-label {
+            font-size: 0.8rem;
+            color: #95a5a6;
+            margin-bottom: 8px;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .decoded-text-content {
+            color: #27ae60;
+            font-weight: bold;
+            word-wrap: break-word;
+        }
     </style>
 </head>
 <body>
     <canvas id="timeline-canvas"></canvas>
+
+    <div class="decoded-text">
+        <div class="decoded-text-label">Decoded Morse:</div>
+        <div class="decoded-text-content" id="decoded-text-output">Waiting for input...</div>
+    </div>
 
     <div class="timeline-header">
         <div class="timeline-title">IU3QEZ CW HST Keyer - Timeline</div>
