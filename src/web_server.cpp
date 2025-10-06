@@ -2,10 +2,11 @@
 #include "keyer_logic.h"
 #include "sidetone_generator.h"
 #include "config_manager.h"
+#include "morse_decoder.h"
 #include <ArduinoJson.h>
 
-WebServerManager::WebServerManager(KeyerLogic* keyer, SidetoneGenerator* sidetone, ConfigManager* configMgr)
-    : _server(80), _ws("/ws/timeline"), _keyer(keyer), _sidetone(sidetone), _configMgr(configMgr), _wsTaskHandle(NULL) {
+WebServerManager::WebServerManager(KeyerLogic* keyer, SidetoneGenerator* sidetone, ConfigManager* configMgr, MorseDecoder* decoder)
+    : _server(80), _ws("/ws/timeline"), _keyer(keyer), _sidetone(sidetone), _configMgr(configMgr), _decoder(decoder), _wsTaskHandle(NULL) {
 }
 
 bool WebServerManager::begin() {
@@ -157,6 +158,23 @@ void WebServerManager::setupRoutes() {
                     }
                 }
 
+                // Decoder parameters
+                if (doc.containsKey("char_space_tolerance")) {
+                    uint8_t tol = doc["char_space_tolerance"];
+                    if (tol <= 100) {
+                        _decoder->setCharSpaceTolerance(tol);
+                        modified = true;
+                    }
+                }
+
+                if (doc.containsKey("word_space_tolerance")) {
+                    uint8_t tol = doc["word_space_tolerance"];
+                    if (tol <= 100) {
+                        _decoder->setWordSpaceTolerance(tol);
+                        modified = true;
+                    }
+                }
+
                 // Risposta
                 JsonDocument response;
                 response["success"] = modified;
@@ -205,15 +223,20 @@ void WebServerManager::handleGetConfig(AsyncWebServerRequest *request) {
     doc["volume"] = _sidetone->getVolume();
     doc["frequency"] = _sidetone->getFrequency();
 
+    // Decoder parameters
+    doc["char_space_tolerance"] = _decoder->getCharSpaceTolerance();
+    doc["word_space_tolerance"] = _decoder->getWordSpaceTolerance();
+
     String output;
     serializeJson(doc, output);
     request->send(200, "application/json", output);
 }
 
 void WebServerManager::handleSaveConfig(AsyncWebServerRequest *request) {
-    // Leggi configurazione corrente da keyer e sidetone
+    // Leggi configurazione corrente da keyer, sidetone e decoder
     _configMgr->readFromKeyer(_keyer);
     _configMgr->readFromSidetone(_sidetone);
+    _configMgr->readFromDecoder(_decoder);
 
     // Salva in NVS
     bool success = _configMgr->save();
@@ -234,6 +257,7 @@ void WebServerManager::handleResetConfig(AsyncWebServerRequest *request) {
     // Applica ai componenti
     _configMgr->applyToKeyer(_keyer);
     _configMgr->applyToSidetone(_sidetone);
+    _configMgr->applyToDecoder(_decoder);
 
     // Salva in NVS
     _configMgr->save();

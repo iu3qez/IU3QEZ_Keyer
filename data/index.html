@@ -129,6 +129,26 @@
                     <span class="help-text">Frequenza tono audio (300-800 Hz)</span>
                 </div>
 
+                <!-- Decoder: Character Space Tolerance -->
+                <div class="form-group">
+                    <label for="char_space_tolerance">Character Space Tolerance (%)</label>
+                    <div class="range-input">
+                        <input type="range" id="char_space_tolerance" name="char_space_tolerance" min="0" max="100" value="20" step="5">
+                        <input type="number" id="char_space_tolerance-value" min="0" max="100" value="20" step="5">
+                    </div>
+                    <span class="help-text">Tolleranza spazio inter-carattere (3 DOT ± %) [0-100%]</span>
+                </div>
+
+                <!-- Decoder: Word Space Tolerance -->
+                <div class="form-group">
+                    <label for="word_space_tolerance">Word Space Tolerance (%)</label>
+                    <div class="range-input">
+                        <input type="range" id="word_space_tolerance" name="word_space_tolerance" min="0" max="100" value="20" step="5">
+                        <input type="number" id="word_space_tolerance-value" min="0" max="100" value="20" step="5">
+                    </div>
+                    <span class="help-text">Tolleranza spazio inter-parola (7 DOT ± %) [0-100%]</span>
+                </div>
+
                 <!-- Buttons -->
                 <div class="form-actions">
                     <button type="button" class="btn btn-primary" id="btn-save">Save to Flash</button>

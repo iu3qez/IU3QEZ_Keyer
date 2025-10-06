@@ -108,6 +108,16 @@ async function loadConfiguration() {
             document.getElementById('frequency-value').value = config.frequency;
         }
 
+        if (config.char_space_tolerance !== undefined) {
+            document.getElementById('char_space_tolerance').value = config.char_space_tolerance;
+            document.getElementById('char_space_tolerance-value').value = config.char_space_tolerance;
+        }
+
+        if (config.word_space_tolerance !== undefined) {
+            document.getElementById('word_space_tolerance').value = config.word_space_tolerance;
+            document.getElementById('word_space_tolerance-value').value = config.word_space_tolerance;
+        }
+
     } catch (error) {
         showMessage('Error loading configuration: ' + error.message, 'error');
     }
@@ -174,7 +184,8 @@ function startStatusPolling() {
 
 // Add listeners for immediate apply on change
 function addImmediateApplyListeners() {
-    const paramIds = ['wpm', 'mode', 'window-up', 'window-down', 'debounce', 'volume', 'frequency'];
+    const paramIds = ['wpm', 'mode', 'window-up', 'window-down', 'debounce', 'volume', 'frequency',
+                      'char_space_tolerance', 'word_space_tolerance'];
 
     paramIds.forEach(id => {
         const element = document.getElementById(id);
@@ -193,7 +204,9 @@ async function applyConfigImmediate() {
         window_down: parseInt(document.getElementById('window-down').value),
         debounce: parseInt(document.getElementById('debounce').value),
         volume: parseInt(document.getElementById('volume').value),
-        frequency: parseInt(document.getElementById('frequency').value)
+        frequency: parseInt(document.getElementById('frequency').value),
+        char_space_tolerance: parseInt(document.getElementById('char_space_tolerance').value),
+        word_space_tolerance: parseInt(document.getElementById('word_space_tolerance').value)
     };
 
     try {
