@@ -1,4 +1,4 @@
-# IU3QEZ CW HST Keyer - Web Interface Implementation Plan
+# IU3QEZ CW QRS2HST Keyer - Web Interface Implementation Plan
 
 ## Obiettivo
 Implementare una pagina web dinamica e veloce (accessibile via WiFi) che non interferisca con il funzionamento del keyer CW.
