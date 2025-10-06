@@ -11,10 +11,11 @@
 class KeyerLogic;
 class SidetoneGenerator;
 class ConfigManager;
+class MorseDecoder;
 
 class WebServerManager {
 public:
-    WebServerManager(KeyerLogic* keyer, SidetoneGenerator* sidetone, ConfigManager* configMgr);
+    WebServerManager(KeyerLogic* keyer, SidetoneGenerator* sidetone, ConfigManager* configMgr, MorseDecoder* decoder);
 
     // Inizializzazione
     bool begin();
@@ -28,6 +29,7 @@ private:
     KeyerLogic* _keyer;
     SidetoneGenerator* _sidetone;
     ConfigManager* _configMgr;
+    MorseDecoder* _decoder;
 
     // WebSocket timeline streaming
     TaskHandle_t _wsTaskHandle;
