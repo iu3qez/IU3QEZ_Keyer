@@ -1,0 +1,7 @@
+{
+  "name": "EspCompat",
+  "version": "1.0.0",
+  "license": "MIT",
+  "frameworks": "arduino",
+  "headers": "compat_ets_printf.h"
+}

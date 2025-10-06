@@ -48,9 +48,9 @@ bool KeyerLogic::begin(KeyerCallback keyingCallback) {
     // Le ISR GPIO CHANGE generano centinaia di interrupt spuri durante transizioni lente
     // Useremo polling nel timer ISR invece
 
-    // Inizializza timer hardware
-    // Timer 0, divider 80 = 1 MHz (1 tick = 1 us)
-    _timer = timerBegin(0, KEYER_TIMER_DIVIDER, true);
+    // Inizializza timer hardware sfruttando GPTimer (Arduino core 3.x)
+    // Risoluzione 1 MHz per mantenere tick da 1 us come in precedenza
+    _timer = timerBegin(1000000);
 
     if (_timer == nullptr) {
         Serial.println("ERRORE: Creazione timer hardware fallita");
@@ -58,11 +58,10 @@ bool KeyerLogic::begin(KeyerCallback keyingCallback) {
     }
 
     // Attach ISR timer
-    timerAttachInterrupt(_timer, &KeyerLogic::timerISR, true);
+    timerAttachInterrupt(_timer, &KeyerLogic::timerISR);
 
     // Timer continuous mode, 1000 us (1 ms) tick rate per state machine + paddle polling
-    timerAlarmWrite(_timer, 1000, true);  // 1ms tick, auto-reload
-    timerAlarmEnable(_timer);
+    timerAlarm(_timer, 1000, true, 0);  // 1ms tick, auto-reload
 
     Serial.printf("Keyer inizializzato: %d WPM, Mode %d, WND U=%d%% D=%d%%\n",
                   _wpm, _mode, _window_up_percent, _window_down_percent);
