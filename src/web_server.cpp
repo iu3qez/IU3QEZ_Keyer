@@ -321,7 +321,25 @@ void WebServerManager::sendTimelineEvents() {
         JsonObject evt = eventsArray.add<JsonObject>();
         evt["ts"] = events[i].timestamp_us;
 
-        // Tipo evento
+        // Eventi estesi (decoder)
+        if (events[i].type_extended != 0) {
+            if (events[i].type_extended & EVENT_ELEMENT_DOT) {
+                evt["type"] = "ELEMENT_DOT";
+            }
+            else if (events[i].type_extended & EVENT_ELEMENT_DASH) {
+                evt["type"] = "ELEMENT_DASH";
+            }
+            else if (events[i].type_extended & EVENT_DECODED_CHAR) {
+                evt["type"] = "DECODED_CHAR";
+                // Carattere decodificato in payload
+                char decoded_char = (char)events[i].payload;
+                char str[2] = {decoded_char, '\0'};
+                evt["char"] = str;
+            }
+            continue;  // Eventi estesi non hanno type standard
+        }
+
+        // Tipo evento base
         const char* type_str = "UNKNOWN";
         switch (events[i].type) {
             case EVENT_DOT_PRESS:    type_str = "DOT_PRESS"; break;
@@ -330,6 +348,8 @@ void WebServerManager::sendTimelineEvents() {
             case EVENT_DASH_RELEASE: type_str = "DASH_RELEASE"; break;
             case EVENT_KEY_ON:       type_str = "KEY_ON"; break;
             case EVENT_KEY_OFF:      type_str = "KEY_OFF"; break;
+            case EVENT_SPACE_CHAR:   type_str = "SPACE_CHAR"; break;
+            case EVENT_SPACE_WORD:   type_str = "SPACE_WORD"; break;
         }
         evt["type"] = type_str;
 

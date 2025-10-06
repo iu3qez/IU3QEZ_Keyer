@@ -133,9 +133,13 @@ void KeyerLogic::startElement(Element_t element) {
     if (element == ELEMENT_DOT) {
         _state = KEYER_DOT_ACTIVE;
         _element_duration_us = _dot_duration_us;
+        // Emetti evento elemento DOT per decoder
+        _timeline.pushExtended(EVENT_ELEMENT_DOT);
     } else {
         _state = KEYER_DASH_ACTIVE;
         _element_duration_us = _dash_duration_us;
+        // Emetti evento elemento DASH per decoder
+        _timeline.pushExtended(EVENT_ELEMENT_DASH);
     }
 
     // Key down

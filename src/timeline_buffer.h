@@ -25,14 +25,21 @@
 
 // Tipi di eventi timeline
 enum TimelineEventType : uint8_t {
-    EVENT_DOT_PRESS     = 0x01,   // DOT paddle premuto
-    EVENT_DOT_RELEASE   = 0x02,   // DOT paddle rilasciato
-    EVENT_DASH_PRESS    = 0x04,   // DASH paddle premuto
-    EVENT_DASH_RELEASE  = 0x08,   // DASH paddle rilasciato
+    EVENT_DOT_PRESS     = 0x01,   // DOT paddle premuto (fisico)
+    EVENT_DOT_RELEASE   = 0x02,   // DOT paddle rilasciato (fisico)
+    EVENT_DASH_PRESS    = 0x04,   // DASH paddle premuto (fisico)
+    EVENT_DASH_RELEASE  = 0x08,   // DASH paddle rilasciato (fisico)
     EVENT_KEY_ON        = 0x10,   // Output KEY attivato
     EVENT_KEY_OFF       = 0x20,   // Output KEY disattivato
     EVENT_SPACE_CHAR    = 0x40,   // Spazio inter-carattere rilevato (3 DOT)
     EVENT_SPACE_WORD    = 0x80,   // Spazio inter-parola rilevato (7 DOT)
+};
+
+// Tipi di eventi estesi (secondo byte, per decoder Morse)
+enum TimelineEventTypeExtended : uint8_t {
+    EVENT_ELEMENT_DOT   = 0x01,   // Elemento DOT generato da state machine
+    EVENT_ELEMENT_DASH  = 0x02,   // Elemento DASH generato da state machine
+    EVENT_DECODED_CHAR  = 0x04,   // Carattere Morse decodificato (payload in flags)
 };
 
 // Flags aggiuntivi per eventi
@@ -46,9 +53,10 @@ enum TimelineEventFlags : uint8_t {
 // Struttura evento timeline (8 bytes - ottimizzata per cache)
 struct TimelineEvent {
     uint32_t timestamp_us;        // Timestamp in microsecondi (wraps ogni ~71 min)
-    TimelineEventType type;       // Tipo evento
+    TimelineEventType type;       // Tipo evento (base events)
     TimelineEventFlags flags;     // Flags aggiuntivi
-    uint8_t reserved[2];          // Padding per allineamento a 8 bytes
+    uint8_t type_extended;        // Eventi estesi (decoder, caratteri)
+    uint8_t payload;              // Payload opzionale (es. carattere decodificato)
 };
 
 // Dimensione buffer (power of 2 per ottimizzazione modulo)
@@ -61,6 +69,10 @@ public:
     // Scrittura evento (chiamata da ISR - IRAM_ATTR)
     void IRAM_ATTR push(TimelineEventType type, TimelineEventFlags flags = FLAG_NONE);
     void IRAM_ATTR push(TimelineEventType type, TimelineEventFlags flags, uint32_t timestamp_us);
+
+    // Scrittura evento esteso (per decoder - elementi e caratteri)
+    void IRAM_ATTR pushExtended(TimelineEventTypeExtended type_ext, uint8_t payload = 0);
+    void IRAM_ATTR pushExtended(TimelineEventTypeExtended type_ext, uint8_t payload, uint32_t timestamp_us);
 
     // Lettura eventi (chiamata da WebSocket task)
     // Ritorna numero di eventi letti
