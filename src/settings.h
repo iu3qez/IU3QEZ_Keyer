@@ -2,7 +2,7 @@
 #define SETTINGS_H
 
 // ============================================================================
-// IU3QEZ CW HST KEYER - CONFIGURAZIONE CENTRALIZZATA
+// IU3QEZ CW QRS2HST KEYER - CONFIGURAZIONE CENTRALIZZATA
 // ============================================================================
 
 // === GPIO PADDLE INPUT ===

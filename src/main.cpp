@@ -43,7 +43,7 @@ void setup() {
   // Inizializzazione
   Serial.begin(115200);
   delay(10000);
-  Serial.println("\n=== IU3QEZ Keyer CW HST - ESP32-S3 ===\n");
+  Serial.println("\n=== IU3QEZ Keyer CW QRS2HST - ESP32-S3 ===\n");
   Serial.flush();
 
   Serial.println("STEP 1/5: Inizializzazione GPIO...");
