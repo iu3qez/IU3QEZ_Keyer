@@ -5,6 +5,7 @@
 #include "sidetone_generator.h"
 #include "power_amp.h"
 #include "keyer_logic.h"
+#include "timeline_buffer.h"
 #include "morse_decoder.h"
 #include "i2c_scanner.h"
 #include "wifi_manager.h"
@@ -16,7 +17,12 @@ NeoPixel_Debug neopixel;
 SidetoneGenerator sidetone;
 PowerAmplifier powerAmp;
 KeyerLogic keyer;
-MorseDecoder decoder(keyer.getTimelineBuffer());  // Decoder legge timeline da keyer
+
+// Timeline buffers (dual-timeline per evitare race condition decoder/websocket)
+TimelineBuffer timeline_decoder;   // Timeline dedicata al decoder
+TimelineBuffer timeline_websocket; // Timeline dedicata al WebSocket
+
+MorseDecoder decoder(&timeline_decoder);  // Decoder legge sua timeline
 ConfigManager configMgr;
 WiFiManager wifiManager;
 WebServerManager webServer(&keyer, &sidetone, &configMgr, &decoder);
@@ -44,7 +50,7 @@ void keyerCallback(bool keying) {
 void setup() {
   // Inizializzazione
   Serial.begin(115200);
-  delay(10000);
+  delay(2000);
   Serial.println("\n=== IU3QEZ Keyer CW HST - ESP32-S3 ===\n");
   Serial.flush();
 
@@ -112,6 +118,11 @@ void setup() {
 
   // Inizializza Keyer Logic con timer hardware
   Serial.println("\nInizializzazione Keyer Logic...");
+
+  // Configura timeline broadcast (decoder + websocket)
+  keyer.setTimelineTargets(&timeline_decoder, &timeline_websocket);
+  Serial.println("Timeline broadcast configurato (decoder + websocket)");
+
   if (!keyer.begin(keyerCallback)) {
     Serial.println("ERRORE: Inizializzazione keyer fallita!");
   } else {
@@ -141,6 +152,11 @@ void setup() {
 
   // Inizializza Web Server
   Serial.println("\nInizializzazione Web Server...");
+
+  // Configura timeline dedicata per WebSocket
+  webServer.setTimelineBuffer(&timeline_websocket);
+  Serial.println("WebSocket timeline configurata");
+
   if (!webServer.begin()) {
     Serial.println("ERRORE: Web Server init fallito!");
   } else {
@@ -171,13 +187,17 @@ void loop() {
   // Processo decoder (legge timeline e rileva spazi)
   decoder.process();
 
+  // Check timeout per spazi (chiamato frequentemente per rilevare spazi senza nuovi eventi)
+  decoder.checkTimeout();
+
   // Sync DOT duration al decoder ogni secondo (se WPM cambia)
   if (millis() - lastDecoderSync > 1000) {
     decoder.setDotDuration(keyer.getDotDuration());
     lastDecoderSync = millis();
   }
 
-  // DEBUG: Stampa stato paddle ogni 2 secondi
+  // DEBUG: Stampa stato paddle ogni 2 secondi (opzionale, commentato per ridurre output)
+  #if 0
   if (millis() - lastPaddleDebug > 2000) {
     bool dot_raw = (digitalRead(DOT_PIN) == LOW);
     bool dash_raw = (digitalRead(DASH_PIN) == LOW);
@@ -189,10 +209,11 @@ void loop() {
     Serial.flush();
     lastPaddleDebug = millis();
   }
+  #endif
 
   // Stampa heartbeat ogni 10 secondi
   if (millis() - lastPrint > 10000) {
-    Serial.printf("Keyer running: %d WPM\n", keyer.getWPM());
+    Serial.printf("^");
     Serial.flush();
     lastPrint = millis();
   }

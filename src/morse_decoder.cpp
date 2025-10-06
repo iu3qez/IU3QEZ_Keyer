@@ -7,6 +7,7 @@ MorseDecoder::MorseDecoder(TimelineBuffer* timeline)
       _last_key_off_us(0),
       _key_is_down(false),
       _dot_duration_us(0),
+      _timeout_decoded(false),
       _last_element_start_us(0),
       _char_spaces_detected(0),
       _word_spaces_detected(0) {
@@ -47,6 +48,56 @@ void MorseDecoder::reset() {
     _last_element_start_us = 0;
 }
 
+void MorseDecoder::checkTimeout() {
+    // Se nessun DOT duration o nessun KEY_OFF precedente, skip
+    if (_dot_duration_us == 0 || _last_key_off_us == 0 || _key_is_down) {
+        return;
+    }
+
+    // Se non c'è pattern pendente o già decodificato, niente da fare
+    if (_current_char_pattern.length() == 0 || _timeout_decoded) {
+        return;
+    }
+
+    // Calcola tempo passato dall'ultimo KEY_OFF
+    uint32_t now_us = micros();
+    uint32_t elapsed_us = now_us - _last_key_off_us;
+
+    // Calcola target per spazio carattere e parola
+    uint32_t char_space_target = _dot_duration_us * 3;
+    uint32_t word_space_target = _dot_duration_us * 7;
+
+    // Se è passato abbastanza tempo per uno spazio carattere
+    if (elapsed_us >= char_space_target) {
+        // DEBUG: marca quando timeout rileva lo spazio
+        Serial.print("[T]");
+
+        // Determina se è spazio carattere o parola
+        if (elapsed_us >= word_space_target) {
+            // Spazio parola
+            char decoded_char = decodePattern(_current_char_pattern);
+            if (decoded_char != '\0') {
+                Serial.printf(" = '%c' ", decoded_char);
+            } else {
+                Serial.print(" = ? ");
+            }
+            Serial.print("|| ");
+        } else {
+            // Spazio carattere
+            char decoded_char = decodePattern(_current_char_pattern);
+            if (decoded_char != '\0') {
+                Serial.printf(" = '%c' | ", decoded_char);
+            } else {
+                Serial.print(" = ? | ");
+            }
+        }
+
+        // Reset pattern e setta flag per evitare ri-decodifica
+        _current_char_pattern = "";
+        _timeout_decoded = true;  // Previene che detectSpace() lo ri-decodifichi
+    }
+}
+
 void MorseDecoder::process() {
     // Leggi eventi dalla timeline (max 32 per chiamata)
     TimelineEvent events[32];
@@ -60,10 +111,16 @@ void MorseDecoder::process() {
             if (evt.type_extended & EVENT_ELEMENT_DOT) {
                 // Aggiungi DOT al pattern corrente
                 _current_char_pattern += '.';
+                Serial.print(".");  // Stampa tono riconosciuto
+                // Reset timeout flag - il pattern è stato esteso, timeout non deve decodificare
+                _timeout_decoded = false;
             }
             else if (evt.type_extended & EVENT_ELEMENT_DASH) {
                 // Aggiungi DASH al pattern corrente
                 _current_char_pattern += '-';
+                Serial.print("-");  // Stampa tono riconosciuto
+                // Reset timeout flag - il pattern è stato esteso, timeout non deve decodificare
+                _timeout_decoded = false;
             }
             else if (evt.type_extended & EVENT_DECODED_CHAR) {
                 // Evento carattere decodificato (loop feedback), ignora
@@ -78,8 +135,8 @@ void MorseDecoder::process() {
                 if (!_key_is_down) {
                     _key_is_down = true;
 
-                    // Se c'è stato un KEY_OFF precedente, calcola pausa
-                    if (_last_key_off_us > 0) {
+                    // Se c'è stato un KEY_OFF precedente E timeout non ha già decodificato, calcola pausa
+                    if (_last_key_off_us > 0 && !_timeout_decoded) {
                         uint32_t pause_duration_us = evt.timestamp_us - _last_key_off_us;
                         detectSpace(pause_duration_us, evt.timestamp_us);
                     }
@@ -93,6 +150,7 @@ void MorseDecoder::process() {
                 if (_key_is_down) {
                     _key_is_down = false;
                     _last_key_off_us = evt.timestamp_us;
+                    _timeout_decoded = false;  // Reset flag per nuovo ciclo
                 }
                 break;
 
@@ -124,6 +182,11 @@ void MorseDecoder::detectSpace(uint32_t pause_duration_us, uint32_t timestamp_us
     uint32_t char_space_target = _dot_duration_us * 3;  // 3 DOT
     uint32_t word_space_target = _dot_duration_us * 7;  // 7 DOT
 
+    // Se la pausa è assurdamente lunga (> 2 secondi), ignora (timestamp corrotto o primo evento)
+    if (pause_duration_us > 2000000) {
+        return;
+    }
+
     // Controlla se pausa è spazio PAROLA (7 DOT ± tolleranza)
     // Controlla prima WORD perché ha priorità su CHAR
     if (isInRange(pause_duration_us, word_space_target, _word_space_tolerance)) {
@@ -132,7 +195,9 @@ void MorseDecoder::detectSpace(uint32_t pause_duration_us, uint32_t timestamp_us
             char decoded_char = decodePattern(_current_char_pattern);
             if (decoded_char != '\0') {
                 _timeline->pushExtended(EVENT_DECODED_CHAR, (uint8_t)decoded_char, timestamp_us);
-                Serial.printf("Decoded: '%s' -> '%c'\n", _current_char_pattern.c_str(), decoded_char);
+                Serial.printf(" = '%c' ", decoded_char);  // Stampa decodifica
+            } else {
+                Serial.print(" = ? ");  // Pattern non riconosciuto
             }
         }
 
@@ -142,6 +207,7 @@ void MorseDecoder::detectSpace(uint32_t pause_duration_us, uint32_t timestamp_us
 
         // Emetti spazio come carattere
         _timeline->pushExtended(EVENT_DECODED_CHAR, (uint8_t)' ', timestamp_us);
+        Serial.print("|| ");  // Stampa spazio parola
 
         // Reset pattern corrente (nuova parola)
         _current_char_pattern = "";
@@ -159,20 +225,31 @@ void MorseDecoder::detectSpace(uint32_t pause_duration_us, uint32_t timestamp_us
             // Emetti evento carattere decodificato
             if (decoded_char != '\0') {
                 _timeline->pushExtended(EVENT_DECODED_CHAR, (uint8_t)decoded_char, timestamp_us);
-
-                // Debug
-                Serial.printf("Decoded: '%s' -> '%c'\n", _current_char_pattern.c_str(), decoded_char);
+                Serial.printf(" = '%c' | ", decoded_char);  // Stampa decodifica + spazio carattere
+            } else {
+                Serial.print(" = ? | ");  // Pattern non riconosciuto + spazio carattere
             }
         }
 
         // Reset pattern per nuovo carattere
         _current_char_pattern = "";
     }
-    // Pausa troppo lunga → timeout, reset decoder
+    // Pausa troppo lunga → timeout, decodifica eventuale pattern prima di resettare
     else if (pause_duration_us > (word_space_target * 2)) {
-        // Timeout: pausa molto lunga, resetta stato
+        // Decodifica eventuale pattern pendente prima del timeout
+        if (_current_char_pattern.length() > 0) {
+            char decoded_char = decodePattern(_current_char_pattern);
+            if (decoded_char != '\0') {
+                _timeline->pushExtended(EVENT_DECODED_CHAR, (uint8_t)decoded_char, timestamp_us);
+                Serial.printf(" = '%c' ", decoded_char);
+            } else {
+                Serial.print(" = ? ");
+            }
+        }
+
+        // Timeout: pausa molto lunga, resetta stato e stampa spazio parola
+        Serial.print("|| ");
         _current_char_pattern = "";
-        // Serial.printf("Decoder timeout: pause=%lu us (too long)\n", pause_duration_us);
     }
     // Pausa troppo corta → inter-element space o parte dello stesso carattere
     // Nessuna azione richiesta

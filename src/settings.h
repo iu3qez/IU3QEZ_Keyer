@@ -5,7 +5,6 @@
 // IU3QEZ CW HST KEYER - CONFIGURAZIONE CENTRALIZZATA
 // ============================================================================
 
-// === GPIO PADDLE INPUT ===
 #define DOT_PIN         3   // GPIO3 - Paddle DOT (active LOW, pull-up)
 #define DASH_PIN        4   // GPIO4 - Paddle DASH (active LOW, pull-up)
 #define KEY_PIN         5   // GPIO5 - Key output
@@ -104,8 +103,8 @@
 // Inter-character space: 3 DOT ± tolleranza
 // Inter-word space: 7 DOT ± tolleranza
 
-#define DECODER_CHAR_SPACE_TOLERANCE  20  // Tolleranza % per spazio carattere (default 20%)
-#define DECODER_WORD_SPACE_TOLERANCE  20  // Tolleranza % per spazio parola (default 20%)
+#define DECODER_CHAR_SPACE_TOLERANCE  50   // Tolleranza % per spazio carattere (50% = da 2.25 a 4.5 DOT)
+#define DECODER_WORD_SPACE_TOLERANCE  40   // Tolleranza % per spazio parola (40% = da 4.9 a 9.8 DOT)
 
 // Esempi con 20% tolleranza:
 // - Spazio carattere (3 DOT): accetta 2.4 - 3.6 DOT

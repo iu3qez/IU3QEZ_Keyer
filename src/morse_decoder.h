@@ -50,6 +50,9 @@ public:
     // Task principale (chiamato da loop o FreeRTOS task)
     void process();
 
+    // Check timeout per spazi (chiamare periodicamente dal loop)
+    void checkTimeout();
+
     // Reset decoder state
     void reset();
 
@@ -68,6 +71,7 @@ private:
     uint32_t _last_key_off_us;      // Timestamp ultimo EVENT_KEY_OFF
     bool _key_is_down;              // Stato corrente KEY (true se premuto)
     uint32_t _dot_duration_us;      // Durata DOT corrente (da KeyerLogic WPM)
+    bool _timeout_decoded;          // Flag: checkTimeout ha già decodificato questo pattern
 
     // Pattern recognition
     String _current_char_pattern;   // Pattern corrente in costruzione (".-.-" etc)
