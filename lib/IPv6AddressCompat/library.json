@@ -1,0 +1,7 @@
+{
+  "name": "IPv6AddressCompat",
+  "version": "1.0.0",
+  "license": "MIT",
+  "frameworks": "arduino",
+  "headers": "IPv6Address.h"
+}
