@@ -121,11 +121,7 @@
 // === ACCESS POINT MODE (quando WIFI_MODE = WIFI_MODE_AP) ===
 #ifndef WIFI_AP_SSID
 #define WIFI_AP_SSID        "IU3QEZ-Keyer"
-#endif
-
-#ifndef WIFI_AP_PASSWORD
-#define WIFI_AP_PASSWORD    "changeme00"   // Min 8 caratteri per WPA2
-#endif
+#define WIFI_AP_PASSWORD    "cw73hst0"     // Min 8 caratteri per WPA2 (aggiunto '0')
 #define WIFI_AP_CHANNEL     1
 #define WIFI_AP_MAX_CONN    4              // Max 4 client simultanei
 
