@@ -19,7 +19,7 @@ KeyerLogic keyer;
 MorseDecoder decoder(keyer.getTimelineBuffer());  // Decoder legge timeline da keyer
 ConfigManager configMgr;
 WiFiManager wifiManager;
-WebServerManager webServer(&keyer, &sidetone, &configMgr);
+WebServerManager webServer(&keyer, &sidetone, &configMgr, &decoder);
 
 // Callback keyer: chiamato quando cambia stato keying
 void keyerCallback(bool keying) {

@@ -426,6 +426,36 @@ class TimelineRenderer {
             }
         }
 
+        // Draw space markers (SPACE_CHAR and SPACE_WORD)
+        const spaceEvents = this.events.filter(evt =>
+            evt.type === 'SPACE_CHAR' || evt.type === 'SPACE_WORD'
+        );
+
+        for (const evt of spaceEvents) {
+            const x = (evt.timestamp - windowStart) * pixelsPerUs;
+
+            // Only draw if within visible window
+            if (x >= 0 && x <= this.width) {
+                if (evt.type === 'SPACE_CHAR') {
+                    // Inter-character space: black thin line (1px)
+                    this.ctx.strokeStyle = '#2c3e50';  // Dark gray/black
+                    this.ctx.lineWidth = 1;
+                    this.ctx.beginPath();
+                    this.ctx.moveTo(x, yOffset + this.STATE_HIGH);
+                    this.ctx.lineTo(x, yOffset + this.STATE_LOW);
+                    this.ctx.stroke();
+                } else if (evt.type === 'SPACE_WORD') {
+                    // Inter-word space: green thick line (3px)
+                    this.ctx.strokeStyle = '#27ae60';  // Green
+                    this.ctx.lineWidth = 3;
+                    this.ctx.beginPath();
+                    this.ctx.moveTo(x, yOffset + this.STATE_HIGH);
+                    this.ctx.lineTo(x, yOffset + this.STATE_LOW);
+                    this.ctx.stroke();
+                }
+            }
+        }
+
         // Draw baseline
         this.ctx.strokeStyle = this.COLORS.GRID;
         this.ctx.lineWidth = 1;
