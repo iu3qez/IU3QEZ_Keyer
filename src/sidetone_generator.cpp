@@ -9,18 +9,12 @@ SidetoneGenerator::SidetoneGenerator()
     : _frequency(SIDETONE_FREQ_HZ), _volume(SIDETONE_VOLUME), _playing(false),
       _phase_accumulator(0), _phase_increment(0),
       _envelope_state(ENV_IDLE), _envelope_sample_count(0),
-      _audioTaskHandle(NULL), _mutex(NULL) {
+      _start_requested(false), _stop_requested(false),
+      _audioTaskHandle(NULL) {
 }
 
 bool SidetoneGenerator::begin() {
     Serial.println("Inizializzazione Sidetone Generator...");
-
-    // Crea mutex per sincronizzazione tra core
-    _mutex = xSemaphoreCreateMutex();
-    if (_mutex == NULL) {
-        Serial.println("ERRORE: Creazione mutex fallita");
-        return false;
-    }
 
     // Genera wavetable sinusoidale
     generateWavetable();
@@ -194,32 +188,15 @@ void SidetoneGenerator::setVolume(uint8_t volume) {
 }
 
 void SidetoneGenerator::start() {
-    // Proteggi accesso con mutex (chiamato da ISR via callback - NO Serial.print!)
-    if (xSemaphoreTake(_mutex, portMAX_DELAY) == pdTRUE) {
-        if (!_playing) {
-            _playing = true;
-            _phase_accumulator = 0;  // Reset phase
-            _envelope_state = ENV_RAMP_UP;
-            _envelope_sample_count = 0;
-            // RIMOSSO: Serial.println() non sicuro in contesto ISR
-        }
-        xSemaphoreGive(_mutex);
-    }
+    // ISR-SAFE: setta solo flag, processato da audio task
+    // Chiamato da ISR timer (Core 0) → nessun mutex, nessun blocking
+    _start_requested = true;
 }
 
 void SidetoneGenerator::stop() {
-    // Proteggi accesso con mutex (chiamato da ISR via callback - NO Serial.print!)
-    if (xSemaphoreTake(_mutex, portMAX_DELAY) == pdTRUE) {
-        if (_playing) {
-            // Non fermare subito, inizia ramp down
-            if (_envelope_state != ENV_RAMP_DOWN) {
-                _envelope_state = ENV_RAMP_DOWN;
-                _envelope_sample_count = 0;
-                // RIMOSSO: Serial.println() non sicuro in contesto ISR
-            }
-        }
-        xSemaphoreGive(_mutex);
-    }
+    // ISR-SAFE: setta solo flag, processato da audio task
+    // Chiamato da ISR timer (Core 0) → nessun mutex, nessun blocking
+    _stop_requested = true;
 }
 
 bool SidetoneGenerator::isPlaying() {
@@ -260,6 +237,26 @@ void SidetoneGenerator::writeSamples(size_t num_samples) {
     static uint32_t debugCount = 0;
 
     if (num_samples > 128) num_samples = 128;
+
+    // Processa richieste ISR-safe (da Core 0 ISR)
+    if (_start_requested) {
+        _start_requested = false;
+        if (!_playing) {
+            _playing = true;
+            _phase_accumulator = 0;  // Reset phase
+            _envelope_state = ENV_RAMP_UP;
+            _envelope_sample_count = 0;
+        }
+    }
+
+    if (_stop_requested) {
+        _stop_requested = false;
+        if (_playing && _envelope_state != ENV_RAMP_DOWN) {
+            // Non fermare subito, inizia ramp down
+            _envelope_state = ENV_RAMP_DOWN;
+            _envelope_sample_count = 0;
+        }
+    }
 
     for (size_t i = 0; i < num_samples; i++) {
         int16_t sample;

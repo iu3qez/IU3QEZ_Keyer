@@ -35,7 +35,7 @@ public:
     void setVolume(uint8_t volume);       // 0-100%
     uint8_t getVolume() { return _volume; }
 
-    // Controllo tono
+    // Controllo tono (ISR-safe)
     void start();
     void stop();
     bool isPlaying();
@@ -60,9 +60,13 @@ private:
     volatile EnvelopeState _envelope_state;  // volatile perché modificato da start/stop
     uint32_t _envelope_sample_count;  // Contatore samples nella fase corrente
 
+    // ISR-safe signaling: flag atomici invece di mutex
+    // Questi flag sono scritti da ISR (Core 0) e letti da audio task (Core 1)
+    volatile bool _start_requested;  // ISR richiede start
+    volatile bool _stop_requested;   // ISR richiede stop
+
     // FreeRTOS task
     TaskHandle_t _audioTaskHandle;
-    SemaphoreHandle_t _mutex;  // Mutex per proteggere accesso a _playing/_envelope_state
 
     // I2S
     bool initI2S();
