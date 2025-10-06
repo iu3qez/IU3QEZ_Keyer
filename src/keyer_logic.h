@@ -34,6 +34,7 @@ public:
     // Configurazione
     void setWPM(uint8_t wpm);
     uint8_t getWPM() { return _wpm; }
+    uint32_t getDotDuration() { return _dot_duration_us; }  // Per decoder
 
     void setMode(uint8_t mode);
     uint8_t getMode() { return _mode; }

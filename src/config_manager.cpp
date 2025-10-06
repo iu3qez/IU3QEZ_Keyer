@@ -1,6 +1,7 @@
 #include "config_manager.h"
 #include "keyer_logic.h"
 #include "sidetone_generator.h"
+#include "morse_decoder.h"
 
 ConfigManager::ConfigManager() {
     // Inizializza con defaults
@@ -33,12 +34,16 @@ bool ConfigManager::load() {
     _config.debounce = _prefs.getUInt("debounce", KeyerConfig::DEFAULT_DEBOUNCE);
     _config.volume = _prefs.getUChar("volume", KeyerConfig::DEFAULT_VOLUME);
     _config.frequency = _prefs.getUShort("frequency", KeyerConfig::DEFAULT_FREQUENCY);
+    _config.char_space_tolerance = _prefs.getUChar("char_tol", KeyerConfig::DEFAULT_CHAR_SPACE_TOL);
+    _config.word_space_tolerance = _prefs.getUChar("word_tol", KeyerConfig::DEFAULT_WORD_SPACE_TOL);
 
     Serial.println("ConfigManager: Configurazione caricata da NVS");
     Serial.printf("  WPM: %d, Mode: %d, Windows: %d%%/%d%%\n",
                   _config.wpm, _config.mode, _config.window_up, _config.window_down);
     Serial.printf("  Debounce: %lu us, Volume: %d%%, Freq: %d Hz\n",
                   _config.debounce, _config.volume, _config.frequency);
+    Serial.printf("  Decoder: Char tol=%d%%, Word tol=%d%%\n",
+                  _config.char_space_tolerance, _config.word_space_tolerance);
 
     return true;
 }
@@ -52,6 +57,8 @@ bool ConfigManager::save() {
     _prefs.putUInt("debounce", _config.debounce);
     _prefs.putUChar("volume", _config.volume);
     _prefs.putUShort("frequency", _config.frequency);
+    _prefs.putUChar("char_tol", _config.char_space_tolerance);
+    _prefs.putUChar("word_tol", _config.word_space_tolerance);
 
     // Marca che abbiamo salvato almeno una volta
     _prefs.putBool("initialized", true);
@@ -61,6 +68,8 @@ bool ConfigManager::save() {
                   _config.wpm, _config.mode, _config.window_up, _config.window_down);
     Serial.printf("  Debounce: %lu us, Volume: %d%%, Freq: %d Hz\n",
                   _config.debounce, _config.volume, _config.frequency);
+    Serial.printf("  Decoder: Char tol=%d%%, Word tol=%d%%\n",
+                  _config.char_space_tolerance, _config.word_space_tolerance);
 
     return true;
 }
@@ -73,6 +82,8 @@ void ConfigManager::resetToDefaults() {
     _config.debounce = KeyerConfig::DEFAULT_DEBOUNCE;
     _config.volume = KeyerConfig::DEFAULT_VOLUME;
     _config.frequency = KeyerConfig::DEFAULT_FREQUENCY;
+    _config.char_space_tolerance = KeyerConfig::DEFAULT_CHAR_SPACE_TOL;
+    _config.word_space_tolerance = KeyerConfig::DEFAULT_WORD_SPACE_TOL;
 
     Serial.println("ConfigManager: Reset a valori di default");
 }
@@ -106,6 +117,20 @@ void ConfigManager::readFromSidetone(SidetoneGenerator* sidetone) {
     if (sidetone) {
         _config.volume = sidetone->getVolume();
         _config.frequency = sidetone->getFrequency();
+    }
+}
+
+void ConfigManager::applyToDecoder(MorseDecoder* decoder) {
+    if (decoder) {
+        decoder->setCharSpaceTolerance(_config.char_space_tolerance);
+        decoder->setWordSpaceTolerance(_config.word_space_tolerance);
+    }
+}
+
+void ConfigManager::readFromDecoder(MorseDecoder* decoder) {
+    if (decoder) {
+        _config.char_space_tolerance = decoder->getCharSpaceTolerance();
+        _config.word_space_tolerance = decoder->getWordSpaceTolerance();
     }
 }
 

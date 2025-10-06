@@ -31,6 +31,8 @@ enum TimelineEventType : uint8_t {
     EVENT_DASH_RELEASE  = 0x08,   // DASH paddle rilasciato
     EVENT_KEY_ON        = 0x10,   // Output KEY attivato
     EVENT_KEY_OFF       = 0x20,   // Output KEY disattivato
+    EVENT_SPACE_CHAR    = 0x40,   // Spazio inter-carattere rilevato (3 DOT)
+    EVENT_SPACE_WORD    = 0x80,   // Spazio inter-parola rilevato (7 DOT)
 };
 
 // Flags aggiuntivi per eventi
