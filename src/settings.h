@@ -5,6 +5,16 @@
 // IU3QEZ CW QRS2HST KEYER - CONFIGURAZIONE CENTRALIZZATA
 // ============================================================================
 
+// ----------------------------------------------------------------------------
+// Optional project secrets (not tracked) override:
+// Define WiFi credentials in include/wifi_credentials.h to keep them out of VCS.
+// ----------------------------------------------------------------------------
+#if defined(__has_include)
+#if __has_include("wifi_credentials.h")
+#include "wifi_credentials.h"
+#endif
+#endif
+
 // === GPIO PADDLE INPUT ===
 #define DOT_PIN         3   // GPIO3 - Paddle DOT (active LOW, pull-up)
 #define DASH_PIN        4   // GPIO4 - Paddle DASH (active LOW, pull-up)
@@ -109,14 +119,24 @@
 #define KEYER_WIFI_MODE       KEYER_WIFI_MODE_STA  // Modalità di default
 
 // === ACCESS POINT MODE (quando WIFI_MODE = WIFI_MODE_AP) ===
+#ifndef WIFI_AP_SSID
 #define WIFI_AP_SSID        "IU3QEZ-Keyer"
-#define WIFI_AP_PASSWORD    "cw73hst0"     // Min 8 caratteri per WPA2 (aggiunto '0')
+#endif
+
+#ifndef WIFI_AP_PASSWORD
+#define WIFI_AP_PASSWORD    "changeme00"   // Min 8 caratteri per WPA2
+#endif
 #define WIFI_AP_CHANNEL     1
 #define WIFI_AP_MAX_CONN    4              // Max 4 client simultanei
 
 // === STATION MODE (quando WIFI_MODE = WIFI_MODE_STA) ===
-#define WIFI_STA_SSID       "PONGO"     // MODIFICARE con SSID della tua rete
-#define WIFI_STA_PASSWORD   "oratona1" // MODIFICARE con password della tua rete
+#ifndef WIFI_STA_SSID
+#define WIFI_STA_SSID       "YOUR_WIFI_SSID"
+#endif
+
+#ifndef WIFI_STA_PASSWORD
+#define WIFI_STA_PASSWORD   "your_wifi_pass"
+#endif
 #define WIFI_STA_TIMEOUT_MS 10000          // Timeout connessione (10 secondi)
 
 // Se la connessione in modalità STA fallisce, fare fallback ad AP?
