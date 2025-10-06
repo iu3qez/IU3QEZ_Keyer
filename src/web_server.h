@@ -12,10 +12,14 @@ class KeyerLogic;
 class SidetoneGenerator;
 class ConfigManager;
 class MorseDecoder;
+class TimelineBuffer;
 
 class WebServerManager {
 public:
     WebServerManager(KeyerLogic* keyer, SidetoneGenerator* sidetone, ConfigManager* configMgr, MorseDecoder* decoder);
+
+    // Configura timeline dedicata per WebSocket
+    void setTimelineBuffer(TimelineBuffer* tl) { _timeline = tl; }
 
     // Inizializzazione
     bool begin();
@@ -30,6 +34,7 @@ private:
     SidetoneGenerator* _sidetone;
     ConfigManager* _configMgr;
     MorseDecoder* _decoder;
+    TimelineBuffer* _timeline;  // Timeline dedicata per WebSocket
 
     // WebSocket timeline streaming
     TaskHandle_t _wsTaskHandle;

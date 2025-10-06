@@ -59,8 +59,14 @@ public:
     uint32_t getDotISRCount() { return _dot_isr_count; }
     uint32_t getDashISRCount() { return _dash_isr_count; }
 
-    // Timeline buffer access
-    TimelineBuffer* getTimelineBuffer() { return &_timeline; }
+    // Timeline buffer access (legacy, per decoder)
+    TimelineBuffer* getTimelineBuffer() { return _timeline_decoder; }
+
+    // Configura timeline targets (decoder + websocket)
+    void setTimelineTargets(TimelineBuffer* decoder_tl, TimelineBuffer* websocket_tl) {
+        _timeline_decoder = decoder_tl;
+        _timeline_websocket = websocket_tl;
+    }
 
 private:
     // Timing (calcolato da WPM)
@@ -110,8 +116,9 @@ private:
     hw_timer_t* _timer;
     KeyerCallback _callback;
 
-    // Timeline buffer (lockfree per ISR)
-    TimelineBuffer _timeline;
+    // Timeline buffers (puntatori esterni, broadcast a decoder + websocket)
+    TimelineBuffer* _timeline_decoder;
+    TimelineBuffer* _timeline_websocket;
 
     // Metodi privati
     void calculateTimings();

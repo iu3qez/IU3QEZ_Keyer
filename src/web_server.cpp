@@ -6,7 +6,7 @@
 #include <ArduinoJson.h>
 
 WebServerManager::WebServerManager(KeyerLogic* keyer, SidetoneGenerator* sidetone, ConfigManager* configMgr, MorseDecoder* decoder)
-    : _server(80), _ws("/ws/timeline"), _keyer(keyer), _sidetone(sidetone), _configMgr(configMgr), _decoder(decoder), _wsTaskHandle(NULL) {
+    : _server(80), _ws("/ws/timeline"), _keyer(keyer), _sidetone(sidetone), _configMgr(configMgr), _decoder(decoder), _timeline(nullptr), _wsTaskHandle(NULL) {
 }
 
 bool WebServerManager::begin() {
@@ -53,10 +53,7 @@ bool WebServerManager::begin() {
 }
 
 void WebServerManager::setupRoutes() {
-    // Serve static files FIRST (più veloce)
-    _server.serveStatic("/", LittleFS, "/")
-        .setDefaultFile("index.html")
-        .setCacheControl("max-age=600");  // Cache 10 minuti
+    // API routes FIRST (hanno priorità su static files)
 
     // API: Get status
     _server.on("/api/status", HTTP_GET, [this](AsyncWebServerRequest *request) {
@@ -187,6 +184,11 @@ void WebServerManager::setupRoutes() {
         }
     );
 
+    // Serve static files LAST (solo se non matchano route sopra)
+    _server.serveStatic("/", LittleFS, "/static/")
+        .setDefaultFile("index.html")
+        .setCacheControl("max-age=600");  // Cache 10 minuti
+
     // 404 handler
     _server.onNotFound([](AsyncWebServerRequest *request) {
         request->send(404, "text/plain", "Not Found");
@@ -298,16 +300,15 @@ void WebServerManager::sendTimelineEvents() {
         return;
     }
 
-    // Leggi eventi dal buffer timeline
-    TimelineBuffer* timeline = _keyer->getTimelineBuffer();
-    if (!timeline || timeline->available() == 0) {
+    // Leggi eventi dal buffer timeline (dedicata al WebSocket)
+    if (!_timeline || _timeline->available() == 0) {
         return;
     }
 
     // Buffer per leggere eventi (max 100 per volta)
     const size_t MAX_EVENTS = 100;
     TimelineEvent events[MAX_EVENTS];
-    size_t count = timeline->read(events, MAX_EVENTS);
+    size_t count = _timeline->read(events, MAX_EVENTS);
 
     if (count == 0) {
         return;
@@ -368,10 +369,10 @@ void WebServerManager::sendTimelineEvents() {
 
     // Statistiche buffer
     JsonObject stats = doc["buffer_stats"].to<JsonObject>();
-    stats["total_pushed"] = timeline->getTotalPushed();
-    stats["total_dropped"] = timeline->getTotalDropped();
-    stats["overruns"] = timeline->getOverruns();
-    stats["available"] = timeline->available();
+    stats["total_pushed"] = _timeline->getTotalPushed();
+    stats["total_dropped"] = _timeline->getTotalDropped();
+    stats["overruns"] = _timeline->getOverruns();
+    stats["available"] = _timeline->available();
 
     // Serializza e invia
     String output;

@@ -46,8 +46,9 @@ class TimelineRenderer {
 
         // Events storage
         this.events = [];             // All events with absolute timestamps
-        this.firstTimestamp = null;   // First event timestamp (anchor)
+        this.firstTimestamp = null;   // First event timestamp (anchor from ESP32)
         this.lastTimestamp = null;    // Most recent event timestamp
+        this.firstReceivedTime = null; // performance.now() quando ricevuto primo evento
 
         // WebSocket
         this.ws = null;
@@ -158,6 +159,7 @@ class TimelineRenderer {
             // Track first and last timestamps
             if (this.firstTimestamp === null) {
                 this.firstTimestamp = evt.ts;
+                this.firstReceivedTime = performance.now(); // Anchor per sync real-time
             }
             this.lastTimestamp = evt.ts;
 
@@ -259,21 +261,54 @@ class TimelineRenderer {
         this.animationId = requestAnimationFrame(() => this.animate());
     }
 
+    // Calculate current time window for rendering
+    getTimeWindow() {
+        if (!this.lastTimestamp) {
+            return null;
+        }
+
+        const durationUs = this.config.duration * 1000 * 1000; // microseconds
+
+        // Usa SEMPRE lastTimestamp come riferimento (finestra ferma quando eventi finiscono)
+        // La finestra mostra gli ultimi N secondi di eventi ricevuti
+        const windowEnd = this.lastTimestamp;
+        const windowStart = windowEnd - durationUs;
+
+        return {
+            start: windowStart,
+            end: windowEnd,
+            durationUs: durationUs,
+            pixelsPerUs: this.width / durationUs
+        };
+    }
+
     // Main render function
     render() {
         // Clear canvas
         this.ctx.fillStyle = this.COLORS.BACKGROUND;
         this.ctx.fillRect(0, 0, this.width, this.height);
 
+        // Calculate time window ONCE for all draw functions
+        const timeWindow = this.getTimeWindow();
+        if (!timeWindow) {
+            console.log('[RENDER] No timeWindow - lastTimestamp:', this.lastTimestamp);
+            return;
+        }
+
+        // DEBUG
+        if (this.events.length === 0 && this.lastTimestamp) {
+            console.log('[RENDER] No events but lastTimestamp exists:', this.lastTimestamp);
+        }
+
         // Draw time grid
-        this.drawTimeGrid();
+        this.drawTimeGrid(timeWindow);
 
         // Draw rows
-        this.drawPaddleRow('DOT', this.DOT_ROW_Y);
-        this.drawPaddleRow('DASH', this.DASH_ROW_Y);
-        this.drawOutputRow(this.OUTPUT_ROW_Y);
+        this.drawPaddleRow('DOT', this.DOT_ROW_Y, timeWindow);
+        this.drawPaddleRow('DASH', this.DASH_ROW_Y, timeWindow);
+        this.drawOutputRow(this.OUTPUT_ROW_Y, timeWindow);
 
-        // Draw labels
+        // Draw labels (SEMPRE disegnate)
         this.drawLabels();
 
         // Draw connection status
@@ -281,15 +316,8 @@ class TimelineRenderer {
     }
 
     // Draw time grid
-    drawTimeGrid() {
-        if (!this.lastTimestamp) return;
-
-        // Calculate time window (show last N seconds ending at lastTimestamp)
-        const durationUs = this.config.duration * 1000 * 1000; // microseconds
-        const windowStart = this.lastTimestamp - durationUs;
-
-        // Pixels per microsecond
-        const pixelsPerUs = this.width / durationUs;
+    drawTimeGrid(timeWindow) {
+        const { start: windowStart, pixelsPerUs, durationUs } = timeWindow;
 
         // Calculate DAH duration (3 dot units) at current WPM
         // DOT duration = 1200ms / WPM
@@ -337,17 +365,12 @@ class TimelineRenderer {
     }
 
     // Draw paddle row (DOT or DASH)
-    drawPaddleRow(type, yOffset) {
-        if (!this.lastTimestamp) return;
-
+    drawPaddleRow(type, yOffset, timeWindow) {
         const color = type === 'DOT' ? this.COLORS.DOT : this.COLORS.DASH;
         const eventPress = type === 'DOT' ? 'DOT_PRESS' : 'DASH_PRESS';
         const eventRelease = type === 'DOT' ? 'DOT_RELEASE' : 'DASH_RELEASE';
 
-        // Time window
-        const durationUs = this.config.duration * 1000 * 1000;
-        const windowStart = this.lastTimestamp - durationUs;
-        const pixelsPerUs = this.width / durationUs;
+        const { start: windowStart, pixelsPerUs } = timeWindow;
 
         // Filter events for this paddle
         const paddleEvents = this.events.filter(evt =>
@@ -411,15 +434,9 @@ class TimelineRenderer {
     }
 
     // Draw output row
-    drawOutputRow(yOffset) {
-        if (!this.lastTimestamp) return;
-
+    drawOutputRow(yOffset, timeWindow) {
         const color = this.COLORS.OUTPUT;
-
-        // Time window
-        const durationUs = this.config.duration * 1000 * 1000;
-        const windowStart = this.lastTimestamp - durationUs;
-        const pixelsPerUs = this.width / durationUs;
+        const { start: windowStart, pixelsPerUs } = timeWindow;
 
         // Filter KEY events
         const outputEvents = this.events.filter(evt =>

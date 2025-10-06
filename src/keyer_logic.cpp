@@ -3,6 +3,27 @@
 // Istanza singleton per ISR
 KeyerLogic* KeyerLogic::_instance = nullptr;
 
+// Helper privati per broadcast a timeline multiple (forward declarations, inline per ISR)
+// Versione CON timestamp esplicito
+static inline void IRAM_ATTR timelineBroadcastPush(TimelineBuffer* tl_decoder, TimelineBuffer* tl_websocket,
+                                                     TimelineEventType type, TimelineEventFlags flags, uint32_t timestamp_us) {
+    if (tl_decoder) tl_decoder->push(type, flags, timestamp_us);
+    if (tl_websocket) tl_websocket->push(type, flags, timestamp_us);
+}
+
+// Versione SENZA timestamp (usa micros() automaticamente)
+static inline void IRAM_ATTR timelineBroadcastPush(TimelineBuffer* tl_decoder, TimelineBuffer* tl_websocket,
+                                                     TimelineEventType type, TimelineEventFlags flags = FLAG_NONE) {
+    if (tl_decoder) tl_decoder->push(type, flags);
+    if (tl_websocket) tl_websocket->push(type, flags);
+}
+
+static inline void IRAM_ATTR timelineBroadcastPushExtended(TimelineBuffer* tl_decoder, TimelineBuffer* tl_websocket,
+                                                             TimelineEventTypeExtended type_extended, uint8_t payload = 0) {
+    if (tl_decoder) tl_decoder->pushExtended(type_extended, payload);
+    if (tl_websocket) tl_websocket->pushExtended(type_extended, payload);
+}
+
 KeyerLogic::KeyerLogic()
     : _wpm(KEYER_WPM_DEFAULT),
       _dot_duration_us(0),
@@ -28,7 +49,9 @@ KeyerLogic::KeyerLogic()
       _dot_isr_count(0),
       _dash_isr_count(0),
       _timer(nullptr),
-      _callback(nullptr) {
+      _callback(nullptr),
+      _timeline_decoder(nullptr),
+      _timeline_websocket(nullptr) {
     _instance = this;
 }
 
@@ -133,20 +156,16 @@ void KeyerLogic::startElement(Element_t element) {
     if (element == ELEMENT_DOT) {
         _state = KEYER_DOT_ACTIVE;
         _element_duration_us = _dot_duration_us;
-        // Emetti evento elemento DOT per decoder
-        _timeline.pushExtended(EVENT_ELEMENT_DOT);
     } else {
         _state = KEYER_DASH_ACTIVE;
         _element_duration_us = _dash_duration_us;
-        // Emetti evento elemento DASH per decoder
-        _timeline.pushExtended(EVENT_ELEMENT_DASH);
     }
 
     // Key down
     _keying = true;
 
     // Cattura evento timeline KEY_ON
-    _timeline.push(EVENT_KEY_ON);
+    timelineBroadcastPush(_timeline_decoder, _timeline_websocket, EVENT_KEY_ON);
 
     if (_callback) {
         _callback(true);
@@ -217,7 +236,8 @@ void IRAM_ATTR KeyerLogic::timerISR() {
             if (k->_dot_pressed && k->_dash_pressed) {
                 flags = FLAG_IAMBIC;  // Squeeze iambic
             }
-            k->_timeline.push(dot_gpio ? EVENT_DOT_PRESS : EVENT_DOT_RELEASE, flags, now);
+            timelineBroadcastPush(k->_timeline_decoder, k->_timeline_websocket,
+                                   dot_gpio ? EVENT_DOT_PRESS : EVENT_DOT_RELEASE, flags, now);
 
             // Traccia tempo di pressione
             if (dot_gpio) {
@@ -237,7 +257,8 @@ void IRAM_ATTR KeyerLogic::timerISR() {
             if (k->_dot_pressed && k->_dash_pressed) {
                 flags = FLAG_IAMBIC;  // Squeeze iambic
             }
-            k->_timeline.push(dash_gpio ? EVENT_DASH_PRESS : EVENT_DASH_RELEASE, flags, now);
+            timelineBroadcastPush(k->_timeline_decoder, k->_timeline_websocket,
+                                   dash_gpio ? EVENT_DASH_PRESS : EVENT_DASH_RELEASE, flags, now);
 
             // Traccia tempo di pressione
             if (dash_gpio) {
@@ -283,11 +304,18 @@ void IRAM_ATTR KeyerLogic::timerISR() {
 
             // Check fine elemento
             if (elapsed >= k->_element_duration_us) {
+                // Emetti evento ELEMENT completato (ADESSO che l'elemento è finito)
+                if (k->_current_element == ELEMENT_DOT) {
+                    timelineBroadcastPushExtended(k->_timeline_decoder, k->_timeline_websocket, EVENT_ELEMENT_DOT);
+                } else if (k->_current_element == ELEMENT_DASH) {
+                    timelineBroadcastPushExtended(k->_timeline_decoder, k->_timeline_websocket, EVENT_ELEMENT_DASH);
+                }
+
                 // Key up
                 k->_keying = false;
 
                 // Cattura evento timeline KEY_OFF
-                k->_timeline.push(EVENT_KEY_OFF);
+                timelineBroadcastPush(k->_timeline_decoder, k->_timeline_websocket, EVENT_KEY_OFF);
 
                 if (k->_callback) {
                     k->_callback(false);
