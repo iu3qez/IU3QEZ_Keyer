@@ -134,6 +134,11 @@ void setup() {
 
   // Inizializza Morse Decoder (dopo keyer, usa timeline del keyer)
   Serial.println("\nInizializzazione Morse Decoder...");
+
+  // Configura timeline WebSocket per broadcast eventi SPACE/DECODED_CHAR
+  decoder.setWebSocketTimeline(&timeline_websocket);
+  Serial.println("Decoder WebSocket timeline configurata");
+
   if (!decoder.begin()) {
     Serial.println("ERRORE: Decoder init fallito!");
   } else {

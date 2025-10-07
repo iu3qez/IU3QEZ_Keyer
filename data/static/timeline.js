@@ -143,6 +143,11 @@ class TimelineRenderer {
         }
 
         data.events.forEach(evt => {
+            // DEBUG: stampa evento ricevuto se è DECODED_CHAR o SPACE
+            if (evt.type === 'DECODED_CHAR' || evt.type === 'SPACE_CHAR' || evt.type === 'SPACE_WORD') {
+                console.log('[EVENT]', evt.type, evt);
+            }
+
             // Handle decoded characters
             if (evt.type === 'DECODED_CHAR') {
                 this.handleDecodedChar(evt.char);
@@ -172,6 +177,9 @@ class TimelineRenderer {
     }
 
     handleDecodedChar(char) {
+        // DEBUG: stampa carattere ricevuto
+        console.log('[DECODED_CHAR] Received:', JSON.stringify(char), 'charCode:', char ? char.charCodeAt(0) : 'null');
+
         // Aggiungi carattere al testo decodificato
         this.decodedText += char;
 
@@ -307,6 +315,9 @@ class TimelineRenderer {
         this.drawPaddleRow('DOT', this.DOT_ROW_Y, timeWindow);
         this.drawPaddleRow('DASH', this.DASH_ROW_Y, timeWindow);
         this.drawOutputRow(this.OUTPUT_ROW_Y, timeWindow);
+
+        // Draw space markers spanning all three rows
+        this.drawSpaceMarkers(timeWindow);
 
         // Draw labels (SEMPRE disegnate)
         this.drawLabels();
@@ -480,7 +491,20 @@ class TimelineRenderer {
             }
         }
 
-        // Draw space markers (SPACE_CHAR and SPACE_WORD)
+        // Draw baseline
+        this.ctx.strokeStyle = this.COLORS.GRID;
+        this.ctx.lineWidth = 1;
+        this.ctx.beginPath();
+        this.ctx.moveTo(0, yOffset + this.STATE_LOW);
+        this.ctx.lineTo(this.width, yOffset + this.STATE_LOW);
+        this.ctx.stroke();
+    }
+
+    // Draw space markers spanning all three rows
+    drawSpaceMarkers(timeWindow) {
+        const { start: windowStart, pixelsPerUs } = timeWindow;
+
+        // Filter space events
         const spaceEvents = this.events.filter(evt =>
             evt.type === 'SPACE_CHAR' || evt.type === 'SPACE_WORD'
         );
@@ -491,32 +515,33 @@ class TimelineRenderer {
             // Only draw if within visible window
             if (x >= 0 && x <= this.width) {
                 if (evt.type === 'SPACE_CHAR') {
-                    // Inter-character space: black thin line (1px)
-                    this.ctx.strokeStyle = '#2c3e50';  // Dark gray/black
-                    this.ctx.lineWidth = 1;
+                    // Inter-character space: single red vertical line spanning all rows
+                    this.ctx.strokeStyle = '#e74c3c';  // Red (distinguibile dalla griglia)
+                    this.ctx.lineWidth = 2;
                     this.ctx.beginPath();
-                    this.ctx.moveTo(x, yOffset + this.STATE_HIGH);
-                    this.ctx.lineTo(x, yOffset + this.STATE_LOW);
+                    this.ctx.moveTo(x, this.DOT_ROW_Y + this.STATE_HIGH);
+                    this.ctx.lineTo(x, this.OUTPUT_ROW_Y + this.STATE_LOW);
                     this.ctx.stroke();
                 } else if (evt.type === 'SPACE_WORD') {
-                    // Inter-word space: green thick line (3px)
-                    this.ctx.strokeStyle = '#27ae60';  // Green
-                    this.ctx.lineWidth = 3;
+                    // Inter-word space: double red vertical lines spanning all rows
+                    const offset = 1.5;  // Pixel spacing between double lines (più vicine)
+                    this.ctx.strokeStyle = '#e74c3c';  // Red (distinguibile dalla griglia)
+                    this.ctx.lineWidth = 2;
+
+                    // First line
                     this.ctx.beginPath();
-                    this.ctx.moveTo(x, yOffset + this.STATE_HIGH);
-                    this.ctx.lineTo(x, yOffset + this.STATE_LOW);
+                    this.ctx.moveTo(x - offset, this.DOT_ROW_Y + this.STATE_HIGH);
+                    this.ctx.lineTo(x - offset, this.OUTPUT_ROW_Y + this.STATE_LOW);
+                    this.ctx.stroke();
+
+                    // Second line
+                    this.ctx.beginPath();
+                    this.ctx.moveTo(x + offset, this.DOT_ROW_Y + this.STATE_HIGH);
+                    this.ctx.lineTo(x + offset, this.OUTPUT_ROW_Y + this.STATE_LOW);
                     this.ctx.stroke();
                 }
             }
         }
-
-        // Draw baseline
-        this.ctx.strokeStyle = this.COLORS.GRID;
-        this.ctx.lineWidth = 1;
-        this.ctx.beginPath();
-        this.ctx.moveTo(0, yOffset + this.STATE_LOW);
-        this.ctx.lineTo(this.width, yOffset + this.STATE_LOW);
-        this.ctx.stroke();
     }
 
     // Draw row labels

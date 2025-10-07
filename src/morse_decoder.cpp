@@ -1,7 +1,26 @@
 #include "morse_decoder.h"
 
+// Helper privati per broadcast eventi decoder a timeline multiple
+static inline void decoderBroadcastPush(TimelineBuffer* tl_decoder, TimelineBuffer* tl_websocket,
+                                         TimelineEventType type, TimelineEventFlags flags, uint32_t timestamp_us) {
+    // Decoder scrive SOLO su websocket timeline (decoder timeline serve solo per leggere eventi keyer)
+    if (tl_websocket) tl_websocket->push(type, flags, timestamp_us);
+}
+
+static inline void decoderBroadcastPushExtended(TimelineBuffer* tl_decoder, TimelineBuffer* tl_websocket,
+                                                 TimelineEventTypeExtended type_extended, uint8_t payload, uint32_t timestamp_us) {
+    // DEBUG: stampa carattere prima di inviare al WebSocket
+    if (type_extended & EVENT_DECODED_CHAR) {
+        Serial.printf("[WS_PUSH] char='%c' (0x%02X) ts=%lu\n", (char)payload, payload, timestamp_us);
+    }
+
+    // Decoder scrive SOLO su websocket timeline
+    if (tl_websocket) tl_websocket->pushExtended(type_extended, payload, timestamp_us);
+}
+
 MorseDecoder::MorseDecoder(TimelineBuffer* timeline)
     : _timeline(timeline),
+      _timeline_websocket(nullptr),
       _char_space_tolerance(DECODER_CHAR_SPACE_TOLERANCE),
       _word_space_tolerance(DECODER_WORD_SPACE_TOLERANCE),
       _last_key_off_us(0),
@@ -194,7 +213,7 @@ void MorseDecoder::detectSpace(uint32_t pause_duration_us, uint32_t timestamp_us
         if (_current_char_pattern.length() > 0) {
             char decoded_char = decodePattern(_current_char_pattern);
             if (decoded_char != '\0') {
-                _timeline->pushExtended(EVENT_DECODED_CHAR, (uint8_t)decoded_char, timestamp_us);
+                decoderBroadcastPushExtended(_timeline, _timeline_websocket, EVENT_DECODED_CHAR, (uint8_t)decoded_char, timestamp_us);
                 Serial.printf(" = '%c' ", decoded_char);  // Stampa decodifica
             } else {
                 Serial.print(" = ? ");  // Pattern non riconosciuto
@@ -202,11 +221,11 @@ void MorseDecoder::detectSpace(uint32_t pause_duration_us, uint32_t timestamp_us
         }
 
         // Spazio inter-parola rilevato!
-        _timeline->push(EVENT_SPACE_WORD, FLAG_NONE, timestamp_us);
+        decoderBroadcastPush(_timeline, _timeline_websocket, EVENT_SPACE_WORD, FLAG_NONE, timestamp_us);
         _word_spaces_detected++;
 
         // Emetti spazio come carattere
-        _timeline->pushExtended(EVENT_DECODED_CHAR, (uint8_t)' ', timestamp_us);
+        decoderBroadcastPushExtended(_timeline, _timeline_websocket, EVENT_DECODED_CHAR, (uint8_t)' ', timestamp_us);
         Serial.print("|| ");  // Stampa spazio parola
 
         // Reset pattern corrente (nuova parola)
@@ -215,7 +234,7 @@ void MorseDecoder::detectSpace(uint32_t pause_duration_us, uint32_t timestamp_us
     // Controlla se pausa è spazio CARATTERE (3 DOT ± tolleranza)
     else if (isInRange(pause_duration_us, char_space_target, _char_space_tolerance)) {
         // Spazio inter-carattere rilevato!
-        _timeline->push(EVENT_SPACE_CHAR, FLAG_NONE, timestamp_us);
+        decoderBroadcastPush(_timeline, _timeline_websocket, EVENT_SPACE_CHAR, FLAG_NONE, timestamp_us);
         _char_spaces_detected++;
 
         // Decodifica pattern corrente → carattere
@@ -224,7 +243,7 @@ void MorseDecoder::detectSpace(uint32_t pause_duration_us, uint32_t timestamp_us
 
             // Emetti evento carattere decodificato
             if (decoded_char != '\0') {
-                _timeline->pushExtended(EVENT_DECODED_CHAR, (uint8_t)decoded_char, timestamp_us);
+                decoderBroadcastPushExtended(_timeline, _timeline_websocket, EVENT_DECODED_CHAR, (uint8_t)decoded_char, timestamp_us);
                 Serial.printf(" = '%c' | ", decoded_char);  // Stampa decodifica + spazio carattere
             } else {
                 Serial.print(" = ? | ");  // Pattern non riconosciuto + spazio carattere
@@ -240,7 +259,7 @@ void MorseDecoder::detectSpace(uint32_t pause_duration_us, uint32_t timestamp_us
         if (_current_char_pattern.length() > 0) {
             char decoded_char = decodePattern(_current_char_pattern);
             if (decoded_char != '\0') {
-                _timeline->pushExtended(EVENT_DECODED_CHAR, (uint8_t)decoded_char, timestamp_us);
+                decoderBroadcastPushExtended(_timeline, _timeline_websocket, EVENT_DECODED_CHAR, (uint8_t)decoded_char, timestamp_us);
                 Serial.printf(" = '%c' ", decoded_char);
             } else {
                 Serial.print(" = ? ");
