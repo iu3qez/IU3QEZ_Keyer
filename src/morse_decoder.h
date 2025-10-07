@@ -36,6 +36,11 @@ class MorseDecoder {
 public:
     MorseDecoder(TimelineBuffer* timeline);
 
+    // Configura timeline targets (per broadcast eventi SPACE e DECODED_CHAR)
+    void setWebSocketTimeline(TimelineBuffer* websocket_tl) {
+        _timeline_websocket = websocket_tl;
+    }
+
     // Inizializzazione
     bool begin();
 
@@ -61,7 +66,8 @@ public:
     uint32_t getWordSpacesDetected() { return _word_spaces_detected; }
 
 private:
-    TimelineBuffer* _timeline;
+    TimelineBuffer* _timeline;           // Timeline decoder (lettura eventi keyer)
+    TimelineBuffer* _timeline_websocket; // Timeline WebSocket (broadcast eventi SPACE/DECODED_CHAR)
 
     // Configurazione
     uint8_t _char_space_tolerance;  // Tolleranza % per spazio carattere (default 20%)
