@@ -6,3 +6,4 @@
 .codex-resume
 .pio-home/
 include/
+idf_samples/*
