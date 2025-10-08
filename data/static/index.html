@@ -149,6 +149,26 @@
                     <span class="help-text">Tolleranza spazio inter-parola (7 DOT ± %) [0-100%]</span>
                 </div>
 
+                <!-- Decoder: Character Space Duration -->
+                <div class="form-group">
+                    <label for="char_space_dots">Character Space Duration (DOT)</label>
+                    <div class="range-input">
+                        <input type="range" id="char_space_dots" name="char_space_dots" min="2" max="5" value="3" step="1">
+                        <input type="number" id="char_space_dots-value" min="2" max="5" value="3" step="1">
+                    </div>
+                    <span class="help-text">Durata spazio inter-carattere [2-5 DOT, standard=3]</span>
+                </div>
+
+                <!-- Decoder: Word Space Duration -->
+                <div class="form-group">
+                    <label for="word_space_dots">Word Space Duration (DOT)</label>
+                    <div class="range-input">
+                        <input type="range" id="word_space_dots" name="word_space_dots" min="5" max="10" value="7" step="1">
+                        <input type="number" id="word_space_dots-value" min="5" max="10" value="7" step="1">
+                    </div>
+                    <span class="help-text">Durata spazio inter-parola [5-10 DOT, standard=7]</span>
+                </div>
+
                 <!-- Buttons -->
                 <div class="form-actions">
                     <button type="button" class="btn btn-primary" id="btn-save">Save to Flash</button>
