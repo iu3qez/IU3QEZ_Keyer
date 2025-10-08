@@ -36,6 +36,8 @@ bool ConfigManager::load() {
     _config.frequency = _prefs.getUShort("frequency", KeyerConfig::DEFAULT_FREQUENCY);
     _config.char_space_tolerance = _prefs.getUChar("char_tol", KeyerConfig::DEFAULT_CHAR_SPACE_TOL);
     _config.word_space_tolerance = _prefs.getUChar("word_tol", KeyerConfig::DEFAULT_WORD_SPACE_TOL);
+    _config.char_space_dots = _prefs.getUChar("char_dots", KeyerConfig::DEFAULT_CHAR_SPACE_DOTS);
+    _config.word_space_dots = _prefs.getUChar("word_dots", KeyerConfig::DEFAULT_WORD_SPACE_DOTS);
 
     Serial.println("ConfigManager: Configurazione caricata da NVS");
     Serial.printf("  WPM: %d, Mode: %d, Windows: %d%%/%d%%\n",
@@ -59,6 +61,8 @@ bool ConfigManager::save() {
     _prefs.putUShort("frequency", _config.frequency);
     _prefs.putUChar("char_tol", _config.char_space_tolerance);
     _prefs.putUChar("word_tol", _config.word_space_tolerance);
+    _prefs.putUChar("char_dots", _config.char_space_dots);
+    _prefs.putUChar("word_dots", _config.word_space_dots);
 
     // Marca che abbiamo salvato almeno una volta
     _prefs.putBool("initialized", true);
@@ -84,6 +88,8 @@ void ConfigManager::resetToDefaults() {
     _config.frequency = KeyerConfig::DEFAULT_FREQUENCY;
     _config.char_space_tolerance = KeyerConfig::DEFAULT_CHAR_SPACE_TOL;
     _config.word_space_tolerance = KeyerConfig::DEFAULT_WORD_SPACE_TOL;
+    _config.char_space_dots = KeyerConfig::DEFAULT_CHAR_SPACE_DOTS;
+    _config.word_space_dots = KeyerConfig::DEFAULT_WORD_SPACE_DOTS;
 
     Serial.println("ConfigManager: Reset a valori di default");
 }
@@ -124,6 +130,8 @@ void ConfigManager::applyToDecoder(MorseDecoder* decoder) {
     if (decoder) {
         decoder->setCharSpaceTolerance(_config.char_space_tolerance);
         decoder->setWordSpaceTolerance(_config.word_space_tolerance);
+        decoder->setCharSpaceDots(_config.char_space_dots);
+        decoder->setWordSpaceDots(_config.word_space_dots);
     }
 }
 
@@ -131,6 +139,8 @@ void ConfigManager::readFromDecoder(MorseDecoder* decoder) {
     if (decoder) {
         _config.char_space_tolerance = decoder->getCharSpaceTolerance();
         _config.word_space_tolerance = decoder->getWordSpaceTolerance();
+        _config.char_space_dots = decoder->getCharSpaceDots();
+        _config.word_space_dots = decoder->getWordSpaceDots();
     }
 }
 

@@ -9,10 +9,15 @@ static inline void decoderBroadcastPush(TimelineBuffer* tl_decoder, TimelineBuff
 
 static inline void decoderBroadcastPushExtended(TimelineBuffer* tl_decoder, TimelineBuffer* tl_websocket,
                                                  TimelineEventTypeExtended type_extended, uint8_t payload, uint32_t timestamp_us) {
-    // DEBUG: stampa carattere prima di inviare al WebSocket
-    if (type_extended & EVENT_DECODED_CHAR) {
-        Serial.printf("[WS_PUSH] char='%c' (0x%02X) ts=%lu\n", (char)payload, payload, timestamp_us);
-    }
+    
+    // DEBUG: stampa carattere prima di inviare al WebSocket (inclusi gli spazi!)
+    // if (type_extended & EVENT_DECODED_CHAR) {
+    //     if (payload == ' ') {
+    //         Serial.printf("[WS_PUSH] char=SPACE (0x%02X) ts=%lu\n", payload, timestamp_us);
+    //     } else {
+    //         Serial.printf("[WS_PUSH] char='%c' (0x%02X) ts=%lu\n", (char)payload, payload, timestamp_us);
+    //     }
+    // }
 
     // Decoder scrive SOLO su websocket timeline
     if (tl_websocket) tl_websocket->pushExtended(type_extended, payload, timestamp_us);
@@ -23,6 +28,8 @@ MorseDecoder::MorseDecoder(TimelineBuffer* timeline)
       _timeline_websocket(nullptr),
       _char_space_tolerance(DECODER_CHAR_SPACE_TOLERANCE),
       _word_space_tolerance(DECODER_WORD_SPACE_TOLERANCE),
+      _char_space_dots(3),      // Default: 3 DOT per spazio carattere
+      _word_space_dots(7),      // Default: 7 DOT per spazio parola
       _last_key_off_us(0),
       _key_is_down(false),
       _dot_duration_us(0),
@@ -56,6 +63,24 @@ void MorseDecoder::setWordSpaceTolerance(uint8_t percent) {
     Serial.printf("Word space tolerance: %d%%\n", _word_space_tolerance);
 }
 
+void MorseDecoder::setCharSpaceDots(uint8_t dots) {
+    Serial.printf("[DEBUG] setCharSpaceDots called with: %d\n", dots);
+    if (dots < 2) dots = 2;   // Minimo 2 DOT
+    if (dots > 5) dots = 5;   // Massimo 5 DOT
+    _char_space_dots = dots;
+    Serial.printf("[DEBUG] Char space set to: %d DOT (stored in _char_space_dots)\n", _char_space_dots);
+    Serial.printf("[DEBUG] Verify with getCharSpaceDots(): %d\n", getCharSpaceDots());
+}
+
+void MorseDecoder::setWordSpaceDots(uint8_t dots) {
+    Serial.printf("[DEBUG] setWordSpaceDots called with: %d\n", dots);
+    if (dots < 5) dots = 5;   // Minimo 5 DOT
+    if (dots > 10) dots = 10; // Massimo 10 DOT
+    _word_space_dots = dots;
+    Serial.printf("[DEBUG] Word space set to: %d DOT (stored in _word_space_dots)\n", _word_space_dots);
+    Serial.printf("[DEBUG] Verify with getWordSpaceDots(): %d\n", getWordSpaceDots());
+}
+
 void MorseDecoder::setDotDuration(uint32_t dot_duration_us) {
     _dot_duration_us = dot_duration_us;
 }
@@ -82,33 +107,49 @@ void MorseDecoder::checkTimeout() {
     uint32_t now_us = micros();
     uint32_t elapsed_us = now_us - _last_key_off_us;
 
-    // Calcola target per spazio carattere e parola
-    uint32_t char_space_target = _dot_duration_us * 3;
-    uint32_t word_space_target = _dot_duration_us * 7;
+    // Calcola target per spazio carattere e parola (configurabile)
+    uint32_t char_space_target = _dot_duration_us * _char_space_dots;
+    uint32_t word_space_target = _dot_duration_us * _word_space_dots;
+
+    // Soglie minime fisse (spazi non possono essere più corti del target)
+    uint32_t char_space_min = char_space_target;  // N*dot fisso
+    uint32_t word_space_min = word_space_target;  // M*dot fisso
 
     // Se è passato abbastanza tempo per uno spazio carattere
-    if (elapsed_us >= char_space_target) {
+    if (elapsed_us >= char_space_min) {
         // DEBUG: marca quando timeout rileva lo spazio
         Serial.print("[T]");
 
-        // Determina se è spazio carattere o parola
-        if (elapsed_us >= word_space_target) {
-            // Spazio parola
-            char decoded_char = decodePattern(_current_char_pattern);
-            if (decoded_char != '\0') {
-                Serial.printf(" = '%c' ", decoded_char);
-            } else {
-                Serial.print(" = ? ");
+        // Determina se è spazio carattere o parola (usa soglia minima)
+        if (elapsed_us >= word_space_min) {
+            // Spazio parola - decodifica carattere finale prima dello spazio
+            if (_current_char_pattern.length() > 0) {
+                char decoded_char = decodePattern(_current_char_pattern);
+                if (decoded_char != '\0') {
+                    decoderBroadcastPushExtended(_timeline, _timeline_websocket, EVENT_DECODED_CHAR, (uint8_t)decoded_char, now_us);
+                    Serial.printf(" = '%c' ", decoded_char);
+                } else {
+                    Serial.print(" = ? ");
+                }
             }
+
+            // Invia evento SPACE_WORD (lo spazio verrà aggiunto dal JavaScript)
+            decoderBroadcastPush(_timeline, _timeline_websocket, EVENT_SPACE_WORD, FLAG_NONE, now_us);
             Serial.print("|| ");
         } else {
-            // Spazio carattere
-            char decoded_char = decodePattern(_current_char_pattern);
-            if (decoded_char != '\0') {
-                Serial.printf(" = '%c' | ", decoded_char);
-            } else {
-                Serial.print(" = ? | ");
+            // Spazio carattere - decodifica pattern corrente
+            if (_current_char_pattern.length() > 0) {
+                char decoded_char = decodePattern(_current_char_pattern);
+                if (decoded_char != '\0') {
+                    decoderBroadcastPushExtended(_timeline, _timeline_websocket, EVENT_DECODED_CHAR, (uint8_t)decoded_char, now_us);
+                    Serial.printf(" = '%c' | ", decoded_char);
+                } else {
+                    Serial.print(" = ? | ");
+                }
             }
+
+            // Invia evento SPACE_CHAR
+            decoderBroadcastPush(_timeline, _timeline_websocket, EVENT_SPACE_CHAR, FLAG_NONE, now_us);
         }
 
         // Reset pattern e setta flag per evitare ri-decodifica
@@ -197,18 +238,24 @@ void MorseDecoder::detectSpace(uint32_t pause_duration_us, uint32_t timestamp_us
         return;
     }
 
-    // Calcola target per spazio carattere e parola
-    uint32_t char_space_target = _dot_duration_us * 3;  // 3 DOT
-    uint32_t word_space_target = _dot_duration_us * 7;  // 7 DOT
+    // Calcola target per spazio carattere e parola (configurabile)
+    uint32_t char_space_target = _dot_duration_us * _char_space_dots;
+    uint32_t word_space_target = _dot_duration_us * _word_space_dots;
+
+    // Calcola soglie: min fisso, max con tolleranza
+    uint32_t char_space_min = char_space_target;  // N*dot fisso
+    uint32_t char_space_max = char_space_target + (char_space_target * _char_space_tolerance) / 100;
+    uint32_t word_space_min = word_space_target;  // M*dot fisso
+    uint32_t word_space_max = word_space_target + (word_space_target * _word_space_tolerance) / 100;
 
     // Se la pausa è assurdamente lunga (> 2 secondi), ignora (timestamp corrotto o primo evento)
     if (pause_duration_us > 2000000) {
         return;
     }
 
-    // Controlla se pausa è spazio PAROLA (7 DOT ± tolleranza)
+    // Controlla se pausa è spazio PAROLA [7*dot, 7*dot + tolleranza%]
     // Controlla prima WORD perché ha priorità su CHAR
-    if (isInRange(pause_duration_us, word_space_target, _word_space_tolerance)) {
+    if (pause_duration_us >= word_space_min && pause_duration_us <= word_space_max) {
         // Decodifica eventuale pattern pendente (carattere finale prima dello spazio)
         if (_current_char_pattern.length() > 0) {
             char decoded_char = decodePattern(_current_char_pattern);
@@ -231,8 +278,8 @@ void MorseDecoder::detectSpace(uint32_t pause_duration_us, uint32_t timestamp_us
         // Reset pattern corrente (nuova parola)
         _current_char_pattern = "";
     }
-    // Controlla se pausa è spazio CARATTERE (3 DOT ± tolleranza)
-    else if (isInRange(pause_duration_us, char_space_target, _char_space_tolerance)) {
+    // Controlla se pausa è spazio CARATTERE [3*dot, 3*dot + tolleranza%]
+    else if (pause_duration_us >= char_space_min && pause_duration_us <= char_space_max) {
         // Spazio inter-carattere rilevato!
         decoderBroadcastPush(_timeline, _timeline_websocket, EVENT_SPACE_CHAR, FLAG_NONE, timestamp_us);
         _char_spaces_detected++;
@@ -266,8 +313,10 @@ void MorseDecoder::detectSpace(uint32_t pause_duration_us, uint32_t timestamp_us
             }
         }
 
-        // Timeout: pausa molto lunga, resetta stato e stampa spazio parola
+        // Timeout: pausa molto lunga, tratta come spazio parola (lo spazio verrà aggiunto dal JavaScript)
+        decoderBroadcastPush(_timeline, _timeline_websocket, EVENT_SPACE_WORD, FLAG_NONE, timestamp_us);
         Serial.print("|| ");
+
         _current_char_pattern = "";
     }
     // Pausa troppo corta → inter-element space o parte dello stesso carattere

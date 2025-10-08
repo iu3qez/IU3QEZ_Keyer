@@ -25,6 +25,8 @@ struct KeyerConfig {
     // Decoder parameters
     uint8_t char_space_tolerance;  // 0-100% tolleranza spazio carattere
     uint8_t word_space_tolerance;  // 0-100% tolleranza spazio parola
+    uint8_t char_space_dots;       // 2-5 DOT per spazio carattere
+    uint8_t word_space_dots;       // 5-10 DOT per spazio parola
 
     // Defaults
     static const uint8_t DEFAULT_WPM = 20;
@@ -36,6 +38,8 @@ struct KeyerConfig {
     static const uint16_t DEFAULT_FREQUENCY = 600;
     static const uint8_t DEFAULT_CHAR_SPACE_TOL = 20;
     static const uint8_t DEFAULT_WORD_SPACE_TOL = 20;
+    static const uint8_t DEFAULT_CHAR_SPACE_DOTS = 3;
+    static const uint8_t DEFAULT_WORD_SPACE_DOTS = 7;
 };
 
 class ConfigManager {

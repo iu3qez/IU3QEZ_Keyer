@@ -100,11 +100,13 @@
 // ============================================================================
 
 // Tolleranze per rilevamento spazi (percentuale)
-// Inter-character space: 3 DOT ± tolleranza
-// Inter-word space: 7 DOT ± tolleranza
+// Inter-character space: N DOT ± tolleranza (N configurabile 2-5)
+// Inter-word space: M DOT ± tolleranza (M configurabile 5-10)
 
-#define DECODER_CHAR_SPACE_TOLERANCE  50   // Tolleranza % per spazio carattere (50% = da 2.25 a 4.5 DOT)
-#define DECODER_WORD_SPACE_TOLERANCE  40   // Tolleranza % per spazio parola (40% = da 4.9 a 9.8 DOT)
+#define DECODER_CHAR_SPACE_DOTS       3    // Durata spazio carattere (in DOT, default 3)
+#define DECODER_WORD_SPACE_DOTS       7    // Durata spazio parola (in DOT, default 7)
+#define DECODER_CHAR_SPACE_TOLERANCE  50   // Tolleranza % per spazio carattere (50% = da 2.25 a 4.5 DOT con default 3)
+#define DECODER_WORD_SPACE_TOLERANCE  40   // Tolleranza % per spazio parola (40% = da 4.9 a 9.8 DOT con default 7)
 
 // Esempi con 20% tolleranza:
 // - Spazio carattere (3 DOT): accetta 2.4 - 3.6 DOT

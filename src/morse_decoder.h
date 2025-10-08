@@ -47,10 +47,14 @@ public:
     // Configurazione (da config manager)
     void setCharSpaceTolerance(uint8_t percent);  // Tolleranza spazio carattere (%)
     void setWordSpaceTolerance(uint8_t percent);  // Tolleranza spazio parola (%)
+    void setCharSpaceDots(uint8_t dots);          // Durata spazio carattere (in DOT, default 3)
+    void setWordSpaceDots(uint8_t dots);          // Durata spazio parola (in DOT, default 7)
     void setDotDuration(uint32_t dot_duration_us); // Durata DOT (da KeyerLogic)
 
     uint8_t getCharSpaceTolerance() { return _char_space_tolerance; }
     uint8_t getWordSpaceTolerance() { return _word_space_tolerance; }
+    uint8_t getCharSpaceDots() { return _char_space_dots; }
+    uint8_t getWordSpaceDots() { return _word_space_dots; }
 
     // Task principale (chiamato da loop o FreeRTOS task)
     void process();
@@ -72,6 +76,8 @@ private:
     // Configurazione
     uint8_t _char_space_tolerance;  // Tolleranza % per spazio carattere (default 20%)
     uint8_t _word_space_tolerance;  // Tolleranza % per spazio parola (default 20%)
+    uint8_t _char_space_dots;       // Durata spazio carattere in DOT (default 3)
+    uint8_t _word_space_dots;       // Durata spazio parola in DOT (default 7)
 
     // State tracking
     uint32_t _last_key_off_us;      // Timestamp ultimo EVENT_KEY_OFF

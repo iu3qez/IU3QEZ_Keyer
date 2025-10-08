@@ -172,6 +172,26 @@ void WebServerManager::setupRoutes() {
                     }
                 }
 
+                if (doc.containsKey("char_space_dots")) {
+                    uint8_t dots = doc["char_space_dots"];
+                    Serial.printf("[WEB] POST /api/config: char_space_dots=%d\n", dots);
+                    _decoder->setCharSpaceDots(dots);  // Validation inside setter (2-5)
+                    modified = true;
+                }
+
+                if (doc.containsKey("word_space_dots")) {
+                    uint8_t dots = doc["word_space_dots"];
+                    _decoder->setWordSpaceDots(dots);  // Validation inside setter (5-10)
+                    modified = true;
+                }
+
+                // Sync back to config manager (so GET /api/config returns updated values)
+                if (modified) {
+                    _configMgr->readFromKeyer(_keyer);
+                    _configMgr->readFromSidetone(_sidetone);
+                    _configMgr->readFromDecoder(_decoder);
+                }
+
                 // Risposta
                 JsonDocument response;
                 response["success"] = modified;
@@ -228,6 +248,11 @@ void WebServerManager::handleGetConfig(AsyncWebServerRequest *request) {
     // Decoder parameters
     doc["char_space_tolerance"] = _decoder->getCharSpaceTolerance();
     doc["word_space_tolerance"] = _decoder->getWordSpaceTolerance();
+    uint8_t char_dots = _decoder->getCharSpaceDots();
+    uint8_t word_dots = _decoder->getWordSpaceDots();
+    Serial.printf("[WEB] GET /api/config: char_space_dots=%d, word_space_dots=%d\n", char_dots, word_dots);
+    doc["char_space_dots"] = char_dots;
+    doc["word_space_dots"] = word_dots;
 
     String output;
     serializeJson(doc, output);
@@ -334,8 +359,14 @@ void WebServerManager::sendTimelineEvents() {
                 evt["type"] = "DECODED_CHAR";
                 // Carattere decodificato in payload
                 char decoded_char = (char)events[i].payload;
-                char str[2] = {decoded_char, '\0'};
-                evt["char"] = str;
+
+                // Per gli spazi, usa un placeholder visibile per evitare problemi con JSON
+                if (decoded_char == ' ') {
+                    evt["char"] = " ";  // Spazio esplicito (ArduinoJson dovrebbe preservarlo)
+                } else {
+                    char str[2] = {decoded_char, '\0'};
+                    evt["char"] = str;
+                }
             }
             continue;  // Eventi estesi non hanno type standard
         }
