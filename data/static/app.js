@@ -52,6 +52,10 @@ function initializeRangeInputs() {
     syncRangeInput('debounce', 'debounce-value');
     syncRangeInput('volume', 'volume-value');
     syncRangeInput('frequency', 'frequency-value');
+    syncRangeInput('char_space_tolerance', 'char_space_tolerance-value');
+    syncRangeInput('word_space_tolerance', 'word_space_tolerance-value');
+    syncRangeInput('char_space_dots', 'char_space_dots-value');
+    syncRangeInput('word_space_dots', 'word_space_dots-value');
 }
 
 function syncRangeInput(rangeId, numberId) {
@@ -116,6 +120,22 @@ async function loadConfiguration() {
         if (config.word_space_tolerance !== undefined) {
             document.getElementById('word_space_tolerance').value = config.word_space_tolerance;
             document.getElementById('word_space_tolerance-value').value = config.word_space_tolerance;
+        }
+
+        if (config.char_space_dots !== undefined) {
+            console.log('Loading char_space_dots:', config.char_space_dots);
+            document.getElementById('char_space_dots').value = config.char_space_dots;
+            document.getElementById('char_space_dots-value').value = config.char_space_dots;
+        } else {
+            console.warn('char_space_dots not in config response!');
+        }
+
+        if (config.word_space_dots !== undefined) {
+            console.log('Loading word_space_dots:', config.word_space_dots);
+            document.getElementById('word_space_dots').value = config.word_space_dots;
+            document.getElementById('word_space_dots-value').value = config.word_space_dots;
+        } else {
+            console.warn('word_space_dots not in config response!');
         }
 
     } catch (error) {
@@ -185,18 +205,29 @@ function startStatusPolling() {
 // Add listeners for immediate apply on change
 function addImmediateApplyListeners() {
     const paramIds = ['wpm', 'mode', 'window-up', 'window-down', 'debounce', 'volume', 'frequency',
-                      'char_space_tolerance', 'word_space_tolerance'];
+                      'char_space_tolerance', 'word_space_tolerance', 'char_space_dots', 'word_space_dots'];
 
     paramIds.forEach(id => {
         const element = document.getElementById(id);
         if (element) {
-            element.addEventListener('change', applyConfigImmediate);
+            // Use 'input' event for range sliders (fires during drag)
+            // Use 'change' event for select elements (fires on selection)
+            const eventType = element.type === 'range' ? 'input' : 'change';
+            element.addEventListener(eventType, applyConfigImmediate);
+        }
+
+        // Add listener also to number input (ID + '-value')
+        const numberInput = document.getElementById(id + '-value');
+        if (numberInput) {
+            numberInput.addEventListener('change', applyConfigImmediate);
         }
     });
 }
 
 // Apply configuration immediately (without saving to flash)
 async function applyConfigImmediate() {
+    console.log('[DEBUG] applyConfigImmediate called');
+
     const formData = {
         wpm: parseInt(document.getElementById('wpm').value),
         mode: parseInt(document.getElementById('mode').value),
@@ -206,8 +237,12 @@ async function applyConfigImmediate() {
         volume: parseInt(document.getElementById('volume').value),
         frequency: parseInt(document.getElementById('frequency').value),
         char_space_tolerance: parseInt(document.getElementById('char_space_tolerance').value),
-        word_space_tolerance: parseInt(document.getElementById('word_space_tolerance').value)
+        word_space_tolerance: parseInt(document.getElementById('word_space_tolerance').value),
+        char_space_dots: parseInt(document.getElementById('char_space_dots').value),
+        word_space_dots: parseInt(document.getElementById('word_space_dots').value)
     };
+
+    console.log('[DEBUG] formData:', formData);
 
     try {
         const response = await fetch(`${API_BASE}/api/config`, {

@@ -25,8 +25,8 @@ class TimelineRenderer {
         // Row layout (scalato per canvas 400px)
         this.ROW_HEIGHT = 120;
         this.ROW_MARGIN = 10;
-        this.DOT_ROW_Y = 20;
-        this.DASH_ROW_Y = 150;
+        this.DASH_ROW_Y = 20;   // Rosso in alto
+        this.DOT_ROW_Y = 150;   // Blu sotto
         this.OUTPUT_ROW_Y = 280;
 
         // State heights
@@ -142,6 +142,8 @@ class TimelineRenderer {
             return;
         }
 
+        console.log('[JS_VERSION] timeline.js v2025-10-07-fix-spaces LOADED'); // Debug: verifica versione caricata
+
         data.events.forEach(evt => {
             // DEBUG: stampa evento ricevuto se è DECODED_CHAR o SPACE
             if (evt.type === 'DECODED_CHAR' || evt.type === 'SPACE_CHAR' || evt.type === 'SPACE_WORD') {
@@ -152,6 +154,18 @@ class TimelineRenderer {
             if (evt.type === 'DECODED_CHAR') {
                 this.handleDecodedChar(evt.char);
                 return;  // Non aggiungiamo DECODED_CHAR alla timeline grafica
+            }
+
+            // Handle space between characters
+            if (evt.type === 'SPACE_CHAR') {
+                this.handleDecodedChar(' ');  // Aggiungi uno spazio al testo
+                // Continua per aggiungere l'evento alla timeline grafica
+            }
+
+            // Handle space between words
+            if (evt.type === 'SPACE_WORD') {
+                this.handleDecodedChar(' ');  // Aggiungi uno spazio al testo (più visibile)
+                // Continua per aggiungere l'evento alla timeline grafica
             }
 
             // Store event with absolute timestamp (microseconds)
@@ -177,11 +191,26 @@ class TimelineRenderer {
     }
 
     handleDecodedChar(char) {
-        // DEBUG: stampa carattere ricevuto
-        console.log('[DECODED_CHAR] Received:', JSON.stringify(char), 'charCode:', char ? char.charCodeAt(0) : 'null');
+        // DEBUG: stampa carattere ricevuto con dettagli extra
+        console.log('[DECODED_CHAR] Received:', JSON.stringify(char),
+                    'charCode:', char ? char.charCodeAt(0) : 'null',
+                    'length:', char ? char.length : 0,
+                    'is space:', char === ' ');
+
+        // Verifica che char non sia null/undefined/empty
+        if (char === null || char === undefined || char === '') {
+            console.warn('[DECODED_CHAR] Empty or null character received, skipping');
+            return;
+        }
 
         // Aggiungi carattere al testo decodificato
-        this.decodedText += char;
+        // Per debug: sostituisci spazi con · (middle dot) per renderli visibili
+        if (char === ' ') {
+            this.decodedText += ' ';  // Spazio normale (3 spazi per visibilità)
+            console.log('[DECODED_CHAR] Space added, total length now:', this.decodedText.length);
+        } else {
+            this.decodedText += char;
+        }
 
         // Limita lunghezza (ultimi 200 caratteri)
         if (this.decodedText.length > 200) {
@@ -201,7 +230,11 @@ class TimelineRenderer {
             if (this.decodedText.length === 0) {
                 this.decodedTextElement.textContent = 'Waiting for input...';
             } else {
-                this.decodedTextElement.textContent = this.decodedText;
+                // DEBUG: mostra contenuto e lunghezza
+                console.log('[DISPLAY] Updating display with:', JSON.stringify(this.decodedText), 'length:', this.decodedText.length);
+
+                // Usa innerText invece di textContent per preservare spazi
+                this.decodedTextElement.innerText = this.decodedText;
             }
         }
     }
