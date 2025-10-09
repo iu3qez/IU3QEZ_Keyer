@@ -1,5 +1,14 @@
 {
-    "idf.flashType": "UART",
-    "idf.monitorPort": "/dev/ttyACM0",
-    "idf.port": "/dev/ttyACM0"
+  "idf.flashType": "UART",
+  "idf.monitorPort": "COM5",
+  "idf.port": "COM5",
+  "idf.projects": [
+    {
+      "path": "${workspaceFolder:idf}",
+      "name": "IU3QEZ-IDF"
+    }
+  ],
+"idf.defaultProject": "${workspaceFolder:idf}",
+"idf.portWin": "COM5"
 }
+
