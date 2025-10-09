@@ -1,0 +1,21 @@
+{
+  "name": "IU3QEZ Keyer Dev",
+  "image": "mcr.microsoft.com/devcontainers/cpp:ubuntu-22.04",
+  "features": {
+    "ghcr.io/devcontainers/features/git:1": {},
+    "ghcr.io/devcontainers/features/node:1": { "version": "20" },
+    "ghcr.io/devcontainers/features/python:1": { "version": "3.12" }
+  },
+  "postCreateCommand": "git config --global core.protectNTFS true || true",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-vscode.cpptools",
+        "ms-vscode-remote.remote-containers",
+        "platformio.platformio-ide",
+        "esbenp.prettier-vscode"
+      ]
+    }
+  }
+}
+
