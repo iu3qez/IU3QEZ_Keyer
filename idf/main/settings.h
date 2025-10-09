@@ -35,8 +35,8 @@
 #define PA_ENABLE_PIN       0     // P1.0 (EXIO8) - Power Amplifier enable
 
 // === SIDETONE AUDIO ===
-#define SIDETONE_FREQ_HZ    600   // Frequenza sidetone (400-600 Hz)
-#define SIDETONE_VOLUME     70    // Volume iniziale (0-100%)
+#define SIDETONE_FREQ_HZ    550   // Frequenza sidetone (400-600 Hz)
+#define SIDETONE_VOLUME     80  // Volume iniziale (0-100%)
 
 // Rampe anti-click (in millisecondi)
 #define SIDETONE_RAMP_UP_MS   2   // Ramp up per evitare click
@@ -55,9 +55,9 @@
 // ============================================================================
 
 // === VELOCITÀ E TIMING ===
-#define KEYER_WPM_DEFAULT   20      // Velocità iniziale in WPM (Words Per Minute)
+#define KEYER_WPM_DEFAULT   25     // Velocità iniziale in WPM (Words Per Minute)
 #define KEYER_WPM_MIN       5       // Minimo WPM
-#define KEYER_WPM_MAX       60      // Massimo WPM (per HST)
+#define KEYER_WPM_MAX       100   // Massimo WPM (per HST)
 
 // === CURTIS MODE B - FINESTRA DI MEMORIZZAZIONE (WND) ===
 #define KEYER_MEMORY_WINDOW_UP      45  // U% - Apertura finestra (% dell'elemento)
