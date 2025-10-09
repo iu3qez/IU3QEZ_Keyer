@@ -1,5 +1,11 @@
 idf_component_register(
-    SRCS "app_main.c"
+    SRCS
+        "app_main.cpp"
+        "config.c"
+        "tone_generator.c"
+        "timeline_buffer.cpp"
+        "keyer_logic.cpp"
+        "morse_decoder.cpp"
     INCLUDE_DIRS "."
     REQUIRES
         esp_wifi

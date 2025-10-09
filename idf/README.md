@@ -9,8 +9,12 @@ L'applicazione `app_main.c` inizializza il bus I2C, il multiplexer TCA9555 (sele
 
 ## Struttura
 
-- `CMakeLists.txt` – include i componenti ufficiali presenti in `../idf_samples`
+- `CMakeLists.txt` – normale entry-point ESP-IDF
+- `main/idf_component.yml` – manifest per Component Manager (esp_codec_dev, esp_io_expander, esp_io_expander_tca95xx_16bit)
 - `main/app_main.c` – logica di test per codec e IO expander
+- `main/config.c|.h` – gestione impostazioni audio modulari (sample rate, fade, amp, buffer)
+- `main/tone_generator.c|.h` – generazione tono con envelope (fade-in/out configurabili)
+- `main/timeline_buffer.*`, `main/keyer_logic.*`, `main/morse_decoder.*` – gestione eventi paddle, state machine keyer e decoder timeline
 - `sdkconfig.defaults` – preset per flash, stack e console USB-JTAG (coerenti con ESP32-S3 Audio Board)
 
 ## Build
@@ -21,6 +25,7 @@ L'applicazione `app_main.c` inizializza il bus I2C, il multiplexer TCA9555 (sele
    ```bash
    cd idf
    idf.py set-target esp32s3
+   idf.py reconfigure  # scarica le dipendenze dal registry
    idf.py build
    ```
 

@@ -132,6 +132,8 @@ WS   /ws/timeline         - WebSocket per eventi timeline real-time
 
 ## Performance Requirements
 
+- [ ] Persist audio/keyer configuration in NVS (follow-up to new config module)
+
 ### Latency Constraints
 - **Keyer ISR**: max 50 μs (nessuna regressione)
 - **Audio task jitter**: < 1 ms (nessun glitch audio)
