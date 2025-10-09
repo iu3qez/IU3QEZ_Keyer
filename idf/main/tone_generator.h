@@ -34,6 +34,7 @@ void tone_generator_start(tone_generator_t *gen);
 void tone_generator_stop(tone_generator_t *gen);
 bool tone_generator_is_active(const tone_generator_t *gen);
 void tone_generator_fill(tone_generator_t *gen, int16_t *stereo_buffer, size_t frames);
+void tone_generator_set_volume(tone_generator_t *gen, uint8_t volume_percent);
 
 #ifdef __cplusplus
 }

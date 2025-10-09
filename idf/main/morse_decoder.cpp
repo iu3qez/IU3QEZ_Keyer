@@ -14,16 +14,15 @@ static inline void decoderBroadcastPush(TimelineBuffer* tl_websocket,
                                         TimelineEventType type,
                                         TimelineEventFlags flags,
                                         uint32_t timestamp_us) {
-    bool pushed = false;
+    bool pushed_usb = false;
     if (tl_websocket) {
         tl_websocket->push(type, flags, timestamp_us);
-        pushed = true;
     }
     if (tl_usb) {
         tl_usb->push(type, flags, timestamp_us);
-        pushed = true;
+        pushed_usb = true;
     }
-    if (pushed) {
+    if (pushed_usb) {
         usb_debug_notify_new_timeline_data();
     }
 }
@@ -38,8 +37,8 @@ static inline void decoderBroadcastPushExtended(TimelineBuffer* tl_websocket,
     }
     if (tl_usb) {
         tl_usb->pushExtended(type_extended, payload, timestamp_us);
+        usb_debug_notify_new_timeline_data();
     }
-    usb_debug_notify_new_timeline_data();
 }
 
 MorseDecoder::MorseDecoder(TimelineBuffer* timeline)
@@ -112,11 +111,26 @@ void MorseDecoder::checkTimeout() {
 
     if (elapsed_us >= char_space_target) {
         ESP_LOGD(TAG, "Timeout space detected (%lu us)", (unsigned long)elapsed_us);
-        if (elapsed_us >= word_space_target) {
+
+        bool is_word_space = (elapsed_us >= word_space_target);
+        if (!_current_char_pattern.empty()) {
             char decoded_char = decodePattern(_current_char_pattern);
             if (decoded_char != '\0') {
-                ESP_LOGD(TAG, "Timeout decoded char '%c'", decoded_char);
+                decoderBroadcastPushExtended(_timeline_websocket, _timeline_usb, EVENT_DECODED_CHAR,
+                                             static_cast<uint8_t>(decoded_char), now_us);
+                if (is_word_space) {
+                    decoderBroadcastPushExtended(_timeline_websocket, _timeline_usb, EVENT_DECODED_CHAR,
+                                                 static_cast<uint8_t>(' '), now_us);
+                }
             }
+        }
+
+        if (is_word_space) {
+            decoderBroadcastPush(_timeline_websocket, _timeline_usb, EVENT_SPACE_WORD, FLAG_NONE, now_us);
+            _word_spaces_detected++;
+        } else {
+            decoderBroadcastPush(_timeline_websocket, _timeline_usb, EVENT_SPACE_CHAR, FLAG_NONE, now_us);
+            _char_spaces_detected++;
         }
 
         _current_char_pattern.clear();

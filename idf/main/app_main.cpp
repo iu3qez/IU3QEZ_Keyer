@@ -136,6 +136,8 @@ void app_main(void)
 {
     ESP_LOGI(TAG, "IU3QEZ ESP-IDF codec + expander bring-up test");
 
+    ESP_ERROR_CHECK(usb_debug_init(&g_timeline_usb));
+
     config_init();
     audio_settings_t audio_cfg;
     ESP_ERROR_CHECK(config_audio_get(&audio_cfg));
@@ -203,7 +205,7 @@ void app_main(void)
         .mclk_multiple = 0,
     };
 
-    ESP_ERROR_CHECK((esp_err_t)esp_codec_dev_set_out_vol(codec, 60));
+    ESP_ERROR_CHECK((esp_err_t)esp_codec_dev_set_out_vol(codec, audio_cfg.volume_percent));
     ESP_ERROR_CHECK((esp_err_t)esp_codec_dev_open(codec, &fs));
     ESP_LOGI(TAG, "Codec configured: %lu Hz, %u bits, %u channels",
               (unsigned long)fs.sample_rate, (unsigned)fs.bits_per_sample, (unsigned)fs.channel);
@@ -227,7 +229,6 @@ void app_main(void)
     g_decoder.setUsbTimeline(&g_timeline_usb);
     ESP_ERROR_CHECK(g_decoder.begin() ? ESP_OK : ESP_FAIL);
     g_decoder.setDotDuration(g_keyer.getDotDuration());
-    ESP_ERROR_CHECK(usb_debug_init(&g_timeline_usb));
 
     tone_generator_init(&g_tone_gen, &audio_cfg);
     tone_generator_stop(&g_tone_gen);

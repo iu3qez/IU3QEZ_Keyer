@@ -27,6 +27,7 @@ void tone_generator_init(tone_generator_t *gen, const audio_settings_t *settings
     }
 
     gen->settings = *settings;
+    tone_generator_set_volume(gen, gen->settings.volume_percent);
     if (gen->settings.sample_rate_hz == 0) {
         ESP_LOGW(TAG, "sample rate is zero, forcing 1 Hz to avoid division by zero");
         gen->settings.sample_rate_hz = 1;
@@ -135,4 +136,14 @@ void tone_generator_fill(tone_generator_t *gen, int16_t *stereo_buffer, size_t f
             }
         }
     }
+}
+
+void tone_generator_set_volume(tone_generator_t *gen, uint8_t volume_percent) {
+    if (!gen) {
+        ESP_LOGE(TAG, "tone generator null on set_volume");
+        return;
+    }
+    gen->settings.volume_percent = volume_percent;
+    gen->settings.tone_amplitude = config_volume_percent_to_amplitude(volume_percent);
+    ESP_LOGI(TAG, "Tone generator volume set to %u%% (amplitude=%d)", volume_percent, gen->settings.tone_amplitude);
 }

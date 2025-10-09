@@ -10,20 +10,18 @@ static const char *TAG = "keyer_logic";
 
 static inline void timelineBroadcastPush(TimelineBuffer* tl_decoder, TimelineBuffer* tl_websocket, TimelineBuffer* tl_usb,
                                          TimelineEventType type, TimelineEventFlags flags, uint32_t timestamp_us) {
-    bool pushed = false;
+    bool pushed_usb = false;
     if (tl_decoder) {
         tl_decoder->push(type, flags, timestamp_us);
-        pushed = true;
     }
     if (tl_websocket) {
         tl_websocket->push(type, flags, timestamp_us);
-        pushed = true;
     }
     if (tl_usb) {
         tl_usb->push(type, flags, timestamp_us);
-        pushed = true;
+        pushed_usb = true;
     }
-    if (pushed) {
+    if (pushed_usb) {
         usb_debug_notify_new_timeline_data();
     }
 }
@@ -45,8 +43,8 @@ static inline void timelineBroadcastPushExtended(TimelineBuffer* tl_decoder, Tim
     }
     if (tl_usb) {
         tl_usb->pushExtended(type_extended, payload, ts);
+        usb_debug_notify_new_timeline_data();
     }
-    usb_debug_notify_new_timeline_data();
 }
 
 KeyerLogic::KeyerLogic()

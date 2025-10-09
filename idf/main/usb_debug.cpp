@@ -1,5 +1,6 @@
 #include "usb_debug.h"
 
+#include <cstdarg>
 #include <cstdio>
 #include <cstring>
 
@@ -25,6 +26,8 @@ constexpr tinyusb_cdcacm_itf_t kTimelinePort = TINYUSB_CDC_ACM_1;
 
 TaskHandle_t s_usb_task_handle = nullptr;
 bool s_cdc_ready[TINYUSB_CDC_ACM_MAX] = {false};
+vprintf_like_t s_prev_vprintf = nullptr;
+bool s_log_hook_installed = false;
 
 size_t boundedStrLen(const char *str, size_t max_len) {
     if (!str) {
@@ -242,9 +245,58 @@ void cdc_line_state_changed_callback(int itf, cdcacm_event_t *event) {
                                    sizeof(banner) - 1);
         tinyusb_cdcacm_write_flush(kTimelinePort, 0);
     }
+
+    if (connected && itf == kMessagePort) {
+        static const char msg_banner[] = "\r\n=== Log channel ready ===\r\n";
+        tinyusb_cdcacm_write_queue(kMessagePort,
+                                   reinterpret_cast<const uint8_t *>(msg_banner),
+                                   sizeof(msg_banner) - 1);
+        tinyusb_cdcacm_write_flush(kMessagePort, 0);
+    }
 }
 
 }  // namespace
+
+static int usb_debug_log_vprintf(const char *fmt, va_list args) {
+    int ret = 0;
+
+    va_list args_for_prev;
+    va_copy(args_for_prev, args);
+    if (s_prev_vprintf) {
+        ret = s_prev_vprintf(fmt, args_for_prev);
+    } else {
+        ret = vprintf(fmt, args_for_prev);
+    }
+    va_end(args_for_prev);
+
+    if (!s_cdc_ready[kMessagePort] || !tusb_cdc_acm_initialized(kMessagePort)) {
+        return ret;
+    }
+
+    char buffer[256];
+    va_list args_for_cdc;
+    va_copy(args_for_cdc, args);
+    int len = vsnprintf(buffer, sizeof(buffer), fmt, args_for_cdc);
+    va_end(args_for_cdc);
+
+    if (len <= 0) {
+        return ret;
+    }
+
+    size_t to_write = static_cast<size_t>(len);
+    if (to_write >= sizeof(buffer)) {
+        to_write = sizeof(buffer) - 1;
+    }
+
+    size_t written = tinyusb_cdcacm_write_queue(kMessagePort,
+                                                reinterpret_cast<const uint8_t *>(buffer),
+                                                to_write);
+    if (written > 0) {
+        tinyusb_cdcacm_write_flush(kMessagePort, 0);
+    }
+
+    return ret;
+}
 
 esp_err_t usb_debug_init(TimelineBuffer *timeline) {
     if (!timeline) {
@@ -300,6 +352,11 @@ esp_err_t usb_debug_init(TimelineBuffer *timeline) {
             ESP_LOGE(TAG, "Failed to create USB timeline task");
             return ESP_FAIL;
         }
+    }
+
+    if (!s_log_hook_installed) {
+        s_prev_vprintf = esp_log_set_vprintf(&usb_debug_log_vprintf);
+        s_log_hook_installed = true;
     }
 
     ESP_LOGI(TAG, "TinyUSB dual CDC initialised");
