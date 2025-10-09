@@ -51,9 +51,10 @@ public:
     uint32_t getDotISRCount() const { return _dot_isr_count; }
     uint32_t getDashISRCount() const { return _dash_isr_count; }
 
-    void setTimelineTargets(TimelineBuffer* decoder_tl, TimelineBuffer* websocket_tl) {
+    void setTimelineTargets(TimelineBuffer* decoder_tl, TimelineBuffer* websocket_tl, TimelineBuffer* usb_tl = nullptr) {
         _timeline_decoder = decoder_tl;
         _timeline_websocket = websocket_tl;
+        _timeline_usb = usb_tl;
     }
 
     TimelineBuffer* getTimelineBuffer() { return _timeline_decoder; }
@@ -98,6 +99,7 @@ private:
 
     TimelineBuffer* _timeline_decoder;
     TimelineBuffer* _timeline_websocket;
+    TimelineBuffer* _timeline_usb;
 };
 
 #endif // KEYER_LOGIC_H

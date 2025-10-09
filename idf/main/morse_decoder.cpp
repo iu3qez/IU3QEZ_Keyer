@@ -5,29 +5,47 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 
+#include "usb_debug.h"
+
 static const char *TAG = "morse_decoder";
 
 static inline void decoderBroadcastPush(TimelineBuffer* tl_websocket,
+                                        TimelineBuffer* tl_usb,
                                         TimelineEventType type,
                                         TimelineEventFlags flags,
                                         uint32_t timestamp_us) {
+    bool pushed = false;
     if (tl_websocket) {
         tl_websocket->push(type, flags, timestamp_us);
+        pushed = true;
+    }
+    if (tl_usb) {
+        tl_usb->push(type, flags, timestamp_us);
+        pushed = true;
+    }
+    if (pushed) {
+        usb_debug_notify_new_timeline_data();
     }
 }
 
 static inline void decoderBroadcastPushExtended(TimelineBuffer* tl_websocket,
+                                                TimelineBuffer* tl_usb,
                                                 TimelineEventTypeExtended type_extended,
                                                 uint8_t payload,
                                                 uint32_t timestamp_us) {
     if (tl_websocket) {
         tl_websocket->pushExtended(type_extended, payload, timestamp_us);
     }
+    if (tl_usb) {
+        tl_usb->pushExtended(type_extended, payload, timestamp_us);
+    }
+    usb_debug_notify_new_timeline_data();
 }
 
 MorseDecoder::MorseDecoder(TimelineBuffer* timeline)
     : _timeline(timeline),
       _timeline_websocket(nullptr),
+      _timeline_usb(nullptr),
       _char_space_tolerance(DECODER_CHAR_SPACE_TOLERANCE),
       _word_space_tolerance(DECODER_WORD_SPACE_TOLERANCE),
       _last_key_off_us(0),
@@ -178,23 +196,23 @@ void MorseDecoder::detectSpace(uint32_t pause_duration_us, uint32_t timestamp_us
         if (!_current_char_pattern.empty()) {
             char decoded_char = decodePattern(_current_char_pattern);
             if (decoded_char != '\0') {
-                decoderBroadcastPushExtended(_timeline_websocket, EVENT_DECODED_CHAR,
+                decoderBroadcastPushExtended(_timeline_websocket, _timeline_usb, EVENT_DECODED_CHAR,
                                              static_cast<uint8_t>(decoded_char), timestamp_us);
             }
         }
 
-        decoderBroadcastPush(_timeline_websocket, EVENT_SPACE_WORD, FLAG_NONE, timestamp_us);
+        decoderBroadcastPush(_timeline_websocket, _timeline_usb, EVENT_SPACE_WORD, FLAG_NONE, timestamp_us);
         _word_spaces_detected++;
-        decoderBroadcastPushExtended(_timeline_websocket, EVENT_DECODED_CHAR,
+        decoderBroadcastPushExtended(_timeline_websocket, _timeline_usb, EVENT_DECODED_CHAR,
                                      static_cast<uint8_t>(' '), timestamp_us);
         _current_char_pattern.clear();
     } else if (isInRange(pause_duration_us, char_space_target, _char_space_tolerance)) {
-        decoderBroadcastPush(_timeline_websocket, EVENT_SPACE_CHAR, FLAG_NONE, timestamp_us);
+        decoderBroadcastPush(_timeline_websocket, _timeline_usb, EVENT_SPACE_CHAR, FLAG_NONE, timestamp_us);
         _char_spaces_detected++;
         if (!_current_char_pattern.empty()) {
             char decoded_char = decodePattern(_current_char_pattern);
             if (decoded_char != '\0') {
-                decoderBroadcastPushExtended(_timeline_websocket, EVENT_DECODED_CHAR,
+                decoderBroadcastPushExtended(_timeline_websocket, _timeline_usb, EVENT_DECODED_CHAR,
                                              static_cast<uint8_t>(decoded_char), timestamp_us);
             }
         }
@@ -203,7 +221,7 @@ void MorseDecoder::detectSpace(uint32_t pause_duration_us, uint32_t timestamp_us
         if (!_current_char_pattern.empty()) {
             char decoded_char = decodePattern(_current_char_pattern);
             if (decoded_char != '\0') {
-                decoderBroadcastPushExtended(_timeline_websocket, EVENT_DECODED_CHAR,
+                decoderBroadcastPushExtended(_timeline_websocket, _timeline_usb, EVENT_DECODED_CHAR,
                                              static_cast<uint8_t>(decoded_char), timestamp_us);
             }
         }

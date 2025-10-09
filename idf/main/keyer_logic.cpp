@@ -4,25 +4,37 @@
 #include "esp_err.h"
 #include "esp_timer.h"
 
+#include "usb_debug.h"
+
 static const char *TAG = "keyer_logic";
 
-static inline void timelineBroadcastPush(TimelineBuffer* tl_decoder, TimelineBuffer* tl_websocket,
+static inline void timelineBroadcastPush(TimelineBuffer* tl_decoder, TimelineBuffer* tl_websocket, TimelineBuffer* tl_usb,
                                          TimelineEventType type, TimelineEventFlags flags, uint32_t timestamp_us) {
+    bool pushed = false;
     if (tl_decoder) {
         tl_decoder->push(type, flags, timestamp_us);
+        pushed = true;
     }
     if (tl_websocket) {
         tl_websocket->push(type, flags, timestamp_us);
+        pushed = true;
+    }
+    if (tl_usb) {
+        tl_usb->push(type, flags, timestamp_us);
+        pushed = true;
+    }
+    if (pushed) {
+        usb_debug_notify_new_timeline_data();
     }
 }
 
-static inline void timelineBroadcastPush(TimelineBuffer* tl_decoder, TimelineBuffer* tl_websocket,
+static inline void timelineBroadcastPush(TimelineBuffer* tl_decoder, TimelineBuffer* tl_websocket, TimelineBuffer* tl_usb,
                                          TimelineEventType type, TimelineEventFlags flags = FLAG_NONE) {
-    timelineBroadcastPush(tl_decoder, tl_websocket, type, flags,
+    timelineBroadcastPush(tl_decoder, tl_websocket, tl_usb, type, flags,
                           static_cast<uint32_t>(esp_timer_get_time()));
 }
 
-static inline void timelineBroadcastPushExtended(TimelineBuffer* tl_decoder, TimelineBuffer* tl_websocket,
+static inline void timelineBroadcastPushExtended(TimelineBuffer* tl_decoder, TimelineBuffer* tl_websocket, TimelineBuffer* tl_usb,
                                                  TimelineEventTypeExtended type_extended, uint8_t payload = 0) {
     uint32_t ts = static_cast<uint32_t>(esp_timer_get_time());
     if (tl_decoder) {
@@ -31,6 +43,10 @@ static inline void timelineBroadcastPushExtended(TimelineBuffer* tl_decoder, Tim
     if (tl_websocket) {
         tl_websocket->pushExtended(type_extended, payload, ts);
     }
+    if (tl_usb) {
+        tl_usb->pushExtended(type_extended, payload, ts);
+    }
+    usb_debug_notify_new_timeline_data();
 }
 
 KeyerLogic::KeyerLogic()
@@ -60,7 +76,8 @@ KeyerLogic::KeyerLogic()
       _timer(nullptr),
       _callback(nullptr),
       _timeline_decoder(nullptr),
-      _timeline_websocket(nullptr) {
+      _timeline_websocket(nullptr),
+      _timeline_usb(nullptr) {
     calculateTimings();
 }
 
@@ -155,7 +172,7 @@ void KeyerLogic::startElement(Element_t element, uint32_t now_us) {
     }
 
     _keying = true;
-    timelineBroadcastPush(_timeline_decoder, _timeline_websocket, EVENT_KEY_ON, FLAG_NONE, now_us);
+    timelineBroadcastPush(_timeline_decoder, _timeline_websocket, _timeline_usb, EVENT_KEY_ON, FLAG_NONE, now_us);
     if (_callback) {
         _callback(true);
     }
@@ -195,7 +212,7 @@ void KeyerLogic::handleTimerTick(uint32_t now_us) {
             _dot_pressed = dot_gpio;
             _dot_last_change_us = now_us;
             TimelineEventFlags flags = (_dot_pressed && _dash_pressed) ? FLAG_IAMBIC : FLAG_NONE;
-            timelineBroadcastPush(_timeline_decoder, _timeline_websocket,
+            timelineBroadcastPush(_timeline_decoder, _timeline_websocket, _timeline_usb,
                                   dot_gpio ? EVENT_DOT_PRESS : EVENT_DOT_RELEASE, flags, now_us);
             if (dot_gpio) {
                 _dot_press_start_us = now_us;
@@ -208,7 +225,7 @@ void KeyerLogic::handleTimerTick(uint32_t now_us) {
             _dash_pressed = dash_gpio;
             _dash_last_change_us = now_us;
             TimelineEventFlags flags = (_dot_pressed && _dash_pressed) ? FLAG_IAMBIC : FLAG_NONE;
-            timelineBroadcastPush(_timeline_decoder, _timeline_websocket,
+            timelineBroadcastPush(_timeline_decoder, _timeline_websocket, _timeline_usb,
                                   dash_gpio ? EVENT_DASH_PRESS : EVENT_DASH_RELEASE, flags, now_us);
             if (dash_gpio) {
                 _dash_press_start_us = now_us;
@@ -242,13 +259,13 @@ void KeyerLogic::handleTimerTick(uint32_t now_us) {
 
             if (elapsed >= _element_duration_us) {
                 if (_current_element == ELEMENT_DOT) {
-                    timelineBroadcastPushExtended(_timeline_decoder, _timeline_websocket, EVENT_ELEMENT_DOT);
+                    timelineBroadcastPushExtended(_timeline_decoder, _timeline_websocket, _timeline_usb, EVENT_ELEMENT_DOT);
                 } else if (_current_element == ELEMENT_DASH) {
-                    timelineBroadcastPushExtended(_timeline_decoder, _timeline_websocket, EVENT_ELEMENT_DASH);
+                    timelineBroadcastPushExtended(_timeline_decoder, _timeline_websocket, _timeline_usb, EVENT_ELEMENT_DASH);
                 }
 
                 _keying = false;
-                timelineBroadcastPush(_timeline_decoder, _timeline_websocket, EVENT_KEY_OFF, FLAG_NONE, now_us);
+                timelineBroadcastPush(_timeline_decoder, _timeline_websocket, _timeline_usb, EVENT_KEY_OFF, FLAG_NONE, now_us);
                 if (_callback) {
                     _callback(false);
                 }

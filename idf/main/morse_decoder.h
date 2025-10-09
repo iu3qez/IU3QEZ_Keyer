@@ -15,6 +15,9 @@ public:
     void setWebSocketTimeline(TimelineBuffer* websocket_tl) {
         _timeline_websocket = websocket_tl;
     }
+    void setUsbTimeline(TimelineBuffer* usb_tl) {
+        _timeline_usb = usb_tl;
+    }
 
     bool begin();
 
@@ -35,6 +38,7 @@ public:
 private:
     TimelineBuffer* _timeline;
     TimelineBuffer* _timeline_websocket;
+    TimelineBuffer* _timeline_usb;
 
     uint8_t _char_space_tolerance;
     uint8_t _word_space_tolerance;

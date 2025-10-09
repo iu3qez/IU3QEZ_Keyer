@@ -6,6 +6,7 @@ idf_component_register(
         "timeline_buffer.cpp"
         "keyer_logic.cpp"
         "morse_decoder.cpp"
+        "usb_debug.cpp"
     INCLUDE_DIRS "."
     REQUIRES
         esp_wifi
@@ -20,4 +21,5 @@ idf_component_register(
         esp_codec_dev
         esp_io_expander
         esp_io_expander_tca95xx_16bit
+        esp_tinyusb
 )
