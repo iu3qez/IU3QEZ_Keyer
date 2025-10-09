@@ -6,3 +6,5 @@
 .codex-resume
 .pio-home/
 include/
+idf/build/
+idf/managed_components
