@@ -22,6 +22,7 @@
 #include "keyer_logic.h"
 #include "morse_decoder.h"
 #include "settings.h"
+#include "usb_debug.h"
 
 #define TAG "codec_input_demo"
 
@@ -41,6 +42,7 @@ constexpr uint32_t kTcaPinPaddleSense = static_cast<uint32_t>(IO_EXPANDER_PIN_NU
 
 static TimelineBuffer g_timeline_decoder;
 static TimelineBuffer g_timeline_websocket;
+static TimelineBuffer g_timeline_usb;
 static KeyerLogic g_keyer;
 static MorseDecoder g_decoder(&g_timeline_decoder);
 static tone_generator_t g_tone_gen;
@@ -218,11 +220,14 @@ void app_main(void)
     ESP_ERROR_CHECK(gpio_config(&key_conf));
     gpio_set_level(static_cast<gpio_num_t>(KEY_PIN), 0);
 
-    g_keyer.setTimelineTargets(&g_timeline_decoder, &g_timeline_websocket);
+    g_keyer.setTimelineTargets(&g_timeline_decoder, &g_timeline_websocket, &g_timeline_usb);
     ESP_ERROR_CHECK(g_keyer.begin(keyerCallback) ? ESP_OK : ESP_FAIL);
+    // TODO: Evaluate pinning the keyer task or Wi-Fi task to a specific core.
     g_decoder.setWebSocketTimeline(&g_timeline_websocket);
+    g_decoder.setUsbTimeline(&g_timeline_usb);
     ESP_ERROR_CHECK(g_decoder.begin() ? ESP_OK : ESP_FAIL);
     g_decoder.setDotDuration(g_keyer.getDotDuration());
+    ESP_ERROR_CHECK(usb_debug_init(&g_timeline_usb));
 
     tone_generator_init(&g_tone_gen, &audio_cfg);
     tone_generator_stop(&g_tone_gen);
