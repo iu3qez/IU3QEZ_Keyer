@@ -1,0 +1,11 @@
+# Codex CLI workspace config for cloud (Codespaces)
+
+# Approval policy options: never, on-failure, on-request, untrusted
+approval_policy = "on-failure"
+
+# Sandbox settings for typical Codespaces usage
+sandbox_mode   = "workspace-write"
+network_access = "enabled"
+
+# You can add per-workspace overrides here later if needed
+
