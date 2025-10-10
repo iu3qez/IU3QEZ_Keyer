@@ -23,6 +23,12 @@
 #include "morse_decoder.h"
 #include "settings.h"
 #include "usb_debug.h"
+#include "wifi_manager.h"
+#include "web_server.h"
+#include "config_store.h"
+
+#include "nvs_flash.h"
+#include "led_strip.h"
 
 #define TAG "codec_input_demo"
 
@@ -46,6 +52,7 @@ static TimelineBuffer g_timeline_usb;
 static KeyerLogic g_keyer;
 static MorseDecoder g_decoder(&g_timeline_decoder);
 static tone_generator_t g_tone_gen;
+static led_strip_handle_t g_led_strip = nullptr;
 
 static void keyerCallback(bool keying);
 
@@ -132,15 +139,93 @@ static void keyerCallback(bool keying)
     }
 }
 
+static esp_err_t init_led_strip_device(void)
+{
+    led_strip_config_t strip_config = {
+        .strip_gpio_num = NEOPIXEL_PIN,
+        .max_leds = NUM_LEDS,
+        .led_pixel_format = LED_PIXEL_FORMAT_GRB,
+        .led_model = LED_MODEL_WS2812,
+        .flags = {
+            .invert_out = false,
+        },
+    };
+
+    led_strip_rmt_config_t rmt_config = {
+        .clk_src = RMT_CLK_SRC_DEFAULT,
+        .resolution_hz = 10 * 1000 * 1000,
+        .mem_block_symbols = 0,
+        .flags = {
+            .with_dma = false,
+        },
+    };
+
+    return led_strip_new_rmt_device(&strip_config, &rmt_config, &g_led_strip);
+}
+
+static void neopixel_boot_rainbow(void)
+{
+    if (!g_led_strip) {
+        return;
+    }
+
+    const uint8_t rainbow[][3] = {
+        {255,   0,   0},
+        {255, 127,   0},
+        {255, 255,   0},
+        {  0, 255,   0},
+        {  0,   0, 255},
+        { 75,   0, 130},
+        {148,   0, 211},
+    };
+    constexpr size_t kRainbowCount = sizeof(rainbow) / sizeof(rainbow[0]);
+
+    for (int cycle = 0; cycle < 3; ++cycle) {
+        for (size_t color = 0; color < kRainbowCount; ++color) {
+            for (int led = 0; led < NUM_LEDS; ++led) {
+                size_t index = (color + led) % kRainbowCount;
+                led_strip_set_pixel(g_led_strip, led,
+                                    rainbow[index][0], rainbow[index][1], rainbow[index][2]);
+            }
+            led_strip_refresh(g_led_strip);
+            vTaskDelay(pdMS_TO_TICKS(60));
+        }
+    }
+
+    led_strip_clear(g_led_strip);
+}
+
 void app_main(void)
 {
     ESP_LOGI(TAG, "IU3QEZ ESP-IDF codec + expander bring-up test");
 
+    esp_err_t nvs_err = nvs_flash_init();
+    if (nvs_err == ESP_ERR_NVS_NO_FREE_PAGES || nvs_err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        nvs_err = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK(nvs_err);
+
     ESP_ERROR_CHECK(usb_debug_init(&g_timeline_usb));
+    if (init_led_strip_device() == ESP_OK) {
+        neopixel_boot_rainbow();
+    } else {
+        ESP_LOGW(TAG, "NeoPixel strip init failed");
+    }
 
     config_init();
     audio_settings_t audio_cfg;
     ESP_ERROR_CHECK(config_audio_get(&audio_cfg));
+
+    persistent_config_t persisted_cfg;
+    config_store_set_defaults(&persisted_cfg);
+    bool cfg_loaded = false;
+    ESP_ERROR_CHECK(config_store_load(&persisted_cfg, &cfg_loaded));
+    ESP_LOGI(TAG, "Persistent config %s", cfg_loaded ? "loaded" : "defaults applied");
+    audio_cfg.volume_percent = persisted_cfg.volume_percent;
+    audio_cfg.tone_frequency_hz = persisted_cfg.tone_frequency_hz;
+    audio_cfg.fade_in_ms = persisted_cfg.fade_in_ms;
+    audio_cfg.fade_out_ms = persisted_cfg.fade_out_ms;
 
     i2c_master_bus_handle_t i2c_bus = nullptr;
     ESP_ERROR_CHECK(init_i2c_bus(&i2c_bus));
@@ -233,6 +318,24 @@ void app_main(void)
     tone_generator_init(&g_tone_gen, &audio_cfg);
     tone_generator_stop(&g_tone_gen);
 
+    config_store_apply_to_runtime(&persisted_cfg, &g_keyer, &g_tone_gen, &g_decoder);
+    g_decoder.setDotDuration(g_keyer.getDotDuration());
+    audio_cfg.volume_percent = tone_generator_get_volume(&g_tone_gen);
+    audio_cfg.tone_frequency_hz = tone_generator_get_frequency(&g_tone_gen);
+    audio_cfg.fade_in_ms = tone_generator_get_fade_in_ms(&g_tone_gen);
+    audio_cfg.fade_out_ms = tone_generator_get_fade_out_ms(&g_tone_gen);
+    ESP_ERROR_CHECK(config_audio_update(&audio_cfg));
+
+    ESP_ERROR_CHECK(wifi_manager_start());
+
+    web_server_config_t web_cfg = {
+        .keyer = &g_keyer,
+        .tone = &g_tone_gen,
+        .decoder = &g_decoder,
+        .timeline = &g_timeline_websocket,
+    };
+    ESP_ERROR_CHECK(web_server_start(web_cfg));
+
     size_t frame_count = audio_cfg.buffer_frames;
     size_t sample_count = frame_count * 2;
     int16_t *frame_buffer = static_cast<int16_t*>(calloc(sample_count, sizeof(int16_t)));
@@ -269,8 +372,6 @@ void app_main(void)
             if (paddle != last_paddle) {
                 ESP_LOGI(TAG, "Paddle sense changed: %s", paddle ? "HIGH" : "LOW");
                 last_paddle = paddle;
-            } else {
-                ESP_LOGI(TAG, "Paddle sense: %s", paddle ? "HIGH" : "LOW");
             }
             last_report = now;
         }

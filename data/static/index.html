@@ -129,24 +129,44 @@
                     <span class="help-text">Frequenza tono audio (300-800 Hz)</span>
                 </div>
 
+                <!-- Sidetone Fade In -->
+                <div class="form-group">
+                    <label for="fade-in">Sidetone Fade-In (ms)</label>
+                    <div class="range-input">
+                        <input type="range" id="fade-in" name="fade_in" min="0" max="50" value="2" step="1">
+                        <input type="number" id="fade-in-value" min="0" max="50" value="2" step="1">
+                    </div>
+                    <span class="help-text">Durata fade-in anti-click (0-50 ms)</span>
+                </div>
+
+                <!-- Sidetone Fade Out -->
+                <div class="form-group">
+                    <label for="fade-out">Sidetone Fade-Out (ms)</label>
+                    <div class="range-input">
+                        <input type="range" id="fade-out" name="fade_out" min="0" max="50" value="4" step="1">
+                        <input type="number" id="fade-out-value" min="0" max="50" value="4" step="1">
+                    </div>
+                    <span class="help-text">Durata fade-out anti-click (0-50 ms)</span>
+                </div>
+
                 <!-- Decoder: Character Space Tolerance -->
                 <div class="form-group">
-                    <label for="char_space_tolerance">Character Space Tolerance (%)</label>
+                    <label for="char_space_tolerance">Character Space Tolerance (dot)</label>
                     <div class="range-input">
-                        <input type="range" id="char_space_tolerance" name="char_space_tolerance" min="0" max="100" value="20" step="5">
-                        <input type="number" id="char_space_tolerance-value" min="0" max="100" value="20" step="5">
+                        <input type="range" id="char_space_tolerance" name="char_space_tolerance" min="0" max="5" value="1.0" step="0.1">
+                        <input type="number" id="char_space_tolerance-value" min="0" max="5" value="1.0" step="0.1">
                     </div>
-                    <span class="help-text">Tolleranza spazio inter-carattere (3 DOT ± %) [0-100%]</span>
+                    <span class="help-text">Margine sullo spazio inter-carattere (3 dot ± valore indicato)</span>
                 </div>
 
                 <!-- Decoder: Word Space Tolerance -->
                 <div class="form-group">
-                    <label for="word_space_tolerance">Word Space Tolerance (%)</label>
+                    <label for="word_space_tolerance">Word Space Tolerance (dot)</label>
                     <div class="range-input">
-                        <input type="range" id="word_space_tolerance" name="word_space_tolerance" min="0" max="100" value="20" step="5">
-                        <input type="number" id="word_space_tolerance-value" min="0" max="100" value="20" step="5">
+                        <input type="range" id="word_space_tolerance" name="word_space_tolerance" min="0" max="7" value="2.0" step="0.1">
+                        <input type="number" id="word_space_tolerance-value" min="0" max="7" value="2.0" step="0.1">
                     </div>
-                    <span class="help-text">Tolleranza spazio inter-parola (7 DOT ± %) [0-100%]</span>
+                    <span class="help-text">Margine sullo spazio inter-parola (7 dot ± valore indicato)</span>
                 </div>
 
                 <!-- Buttons -->

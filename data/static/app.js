@@ -52,6 +52,10 @@ function initializeRangeInputs() {
     syncRangeInput('debounce', 'debounce-value');
     syncRangeInput('volume', 'volume-value');
     syncRangeInput('frequency', 'frequency-value');
+    syncRangeInput('fade-in', 'fade-in-value');
+    syncRangeInput('fade-out', 'fade-out-value');
+    syncRangeInput('char_space_tolerance', 'char_space_tolerance-value');
+    syncRangeInput('word_space_tolerance', 'word_space_tolerance-value');
 }
 
 function syncRangeInput(rangeId, numberId) {
@@ -108,14 +112,26 @@ async function loadConfiguration() {
             document.getElementById('frequency-value').value = config.frequency;
         }
 
-        if (config.char_space_tolerance !== undefined) {
-            document.getElementById('char_space_tolerance').value = config.char_space_tolerance;
-            document.getElementById('char_space_tolerance-value').value = config.char_space_tolerance;
+        if (config.fade_in_ms !== undefined) {
+            document.getElementById('fade-in').value = config.fade_in_ms;
+            document.getElementById('fade-in-value').value = config.fade_in_ms;
         }
 
-        if (config.word_space_tolerance !== undefined) {
-            document.getElementById('word_space_tolerance').value = config.word_space_tolerance;
-            document.getElementById('word_space_tolerance-value').value = config.word_space_tolerance;
+        if (config.fade_out_ms !== undefined) {
+            document.getElementById('fade-out').value = config.fade_out_ms;
+            document.getElementById('fade-out-value').value = config.fade_out_ms;
+        }
+
+        if (config.char_space_tolerance_dots !== undefined) {
+            const value = Number(config.char_space_tolerance_dots).toFixed(1);
+            document.getElementById('char_space_tolerance').value = value;
+            document.getElementById('char_space_tolerance-value').value = value;
+        }
+
+        if (config.word_space_tolerance_dots !== undefined) {
+            const value = Number(config.word_space_tolerance_dots).toFixed(1);
+            document.getElementById('word_space_tolerance').value = value;
+            document.getElementById('word_space_tolerance-value').value = value;
         }
 
     } catch (error) {
@@ -185,7 +201,7 @@ function startStatusPolling() {
 // Add listeners for immediate apply on change
 function addImmediateApplyListeners() {
     const paramIds = ['wpm', 'mode', 'window-up', 'window-down', 'debounce', 'volume', 'frequency',
-                      'char_space_tolerance', 'word_space_tolerance'];
+                      'fade-in', 'fade-out', 'char_space_tolerance', 'word_space_tolerance'];
 
     paramIds.forEach(id => {
         const element = document.getElementById(id);
@@ -196,17 +212,32 @@ function addImmediateApplyListeners() {
 }
 
 // Apply configuration immediately (without saving to flash)
-async function applyConfigImmediate() {
+async function applyConfigImmediate(suppressMessages = false) {
+    const getInt = (id) => {
+        const value = parseInt(document.getElementById(id).value, 10);
+        return Number.isNaN(value) ? 0 : value;
+    };
+
+    const roundDotValue = (id) => {
+        const raw = parseFloat(document.getElementById(id).value);
+        if (Number.isNaN(raw)) {
+            return 0;
+        }
+        return Math.round(raw * 10) / 10;
+    };
+
     const formData = {
-        wpm: parseInt(document.getElementById('wpm').value),
-        mode: parseInt(document.getElementById('mode').value),
-        window_up: parseInt(document.getElementById('window-up').value),
-        window_down: parseInt(document.getElementById('window-down').value),
-        debounce: parseInt(document.getElementById('debounce').value),
-        volume: parseInt(document.getElementById('volume').value),
-        frequency: parseInt(document.getElementById('frequency').value),
-        char_space_tolerance: parseInt(document.getElementById('char_space_tolerance').value),
-        word_space_tolerance: parseInt(document.getElementById('word_space_tolerance').value)
+        wpm: getInt('wpm'),
+        mode: getInt('mode'),
+        window_up: getInt('window-up'),
+        window_down: getInt('window-down'),
+        debounce: getInt('debounce'),
+        volume: getInt('volume'),
+        frequency: getInt('frequency'),
+        fade_in_ms: getInt('fade-in'),
+        fade_out_ms: getInt('fade-out'),
+        char_space_tolerance_dots: roundDotValue('char_space_tolerance'),
+        word_space_tolerance_dots: roundDotValue('word_space_tolerance')
     };
 
     try {
@@ -223,17 +254,28 @@ async function applyConfigImmediate() {
         if (result.success) {
             // Success - no message, immediate feedback
             updateStatus(); // Refresh status
+            return true;
         } else {
-            showMessage('Apply failed: ' + result.message, 'error');
+            if (!suppressMessages) {
+                showMessage('Apply failed: ' + result.message, 'error');
+            }
+            return false;
         }
 
     } catch (error) {
-        console.error('Error applying configuration:', error);
+        if (!suppressMessages) {
+            showMessage('Error applying configuration: ' + error.message, 'error');
+        }
+        return false;
     }
 }
 
 // Save configuration to flash
 async function handleSaveConfig() {
+    const applied = await applyConfigImmediate(true);
+    if (!applied) {
+        console.warn('Immediate apply failed before saving configuration');
+    }
     try {
         const response = await fetch(`${API_BASE}/api/config/save`, {
             method: 'POST'

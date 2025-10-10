@@ -1,4 +1,14 @@
 dependencies:
+  espressif/cjson:
+    component_hash: 9372811fb197926f522c467627cf4a8e72b681e0366e17879631da801103aef3
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.0'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.7.19
   espressif/esp_codec_dev:
     component_hash: beef7e3535774b24c8d89e9ab083fe67e4098df65d836461745a8dea53ddfc94
     dependencies:
@@ -47,6 +57,16 @@ dependencies:
       registry_url: https://components.espressif.com/
       type: service
     version: 1.7.6~2
+  espressif/led_strip:
+    component_hash: 28c6509a727ef74925b372ed404772aeedf11cce10b78c3f69b3c66799095e2d
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=4.4'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 2.5.5
   espressif/tinyusb:
     component_hash: aec03a6402b66695719fa1121b7d9eee8031922df5c8a3f4b54a51874f65bbd6
     dependencies:
@@ -67,10 +87,12 @@ dependencies:
       type: idf
     version: 5.5.1
 direct_dependencies:
+- espressif/cjson
 - espressif/esp_codec_dev
 - espressif/esp_io_expander
 - espressif/esp_io_expander_tca95xx_16bit
 - espressif/esp_tinyusb
-manifest_hash: a6f4dd0f3d9164a0fae84f60cdf48a8f822437a3fc7bd22b4606b9f62efa8ce3
+- espressif/led_strip
+manifest_hash: 80021801e0f69bd43e65c7d154e449bcd7708aefbb9df1a01ae605208aabf765
 target: esp32s3
 version: 2.0.0

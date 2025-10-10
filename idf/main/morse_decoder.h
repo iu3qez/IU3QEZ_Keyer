@@ -21,12 +21,12 @@ public:
 
     bool begin();
 
-    void setCharSpaceTolerance(uint8_t percent);
-    void setWordSpaceTolerance(uint8_t percent);
+    void setCharSpaceToleranceDots(uint16_t tenths);
+    void setWordSpaceToleranceDots(uint16_t tenths);
     void setDotDuration(uint32_t dot_duration_us);
 
-    uint8_t getCharSpaceTolerance() const { return _char_space_tolerance; }
-    uint8_t getWordSpaceTolerance() const { return _word_space_tolerance; }
+    uint16_t getCharSpaceToleranceDots() const { return _char_space_tolerance_tenths; }
+    uint16_t getWordSpaceToleranceDots() const { return _word_space_tolerance_tenths; }
 
     void process();
     void checkTimeout();
@@ -40,8 +40,8 @@ private:
     TimelineBuffer* _timeline_websocket;
     TimelineBuffer* _timeline_usb;
 
-    uint8_t _char_space_tolerance;
-    uint8_t _word_space_tolerance;
+    uint16_t _char_space_tolerance_tenths;
+    uint16_t _word_space_tolerance_tenths;
 
     uint32_t _last_key_off_us;
     bool _key_is_down;
@@ -57,7 +57,6 @@ private:
     uint32_t _word_spaces_detected;
 
     void detectSpace(uint32_t pause_duration_us, uint32_t timestamp_us);
-    bool isInRange(uint32_t value, uint32_t target, uint8_t tolerance_percent) const;
 
     void initMorseTable();
     char decodePattern(const std::string& pattern) const;

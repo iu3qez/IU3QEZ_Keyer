@@ -7,6 +7,9 @@ idf_component_register(
         "keyer_logic.cpp"
         "morse_decoder.cpp"
         "usb_debug.cpp"
+        "config_store.cpp"
+        "wifi_manager.cpp"
+        "web_server.cpp"
     INCLUDE_DIRS "."
     REQUIRES
         esp_wifi
@@ -17,6 +20,11 @@ idf_component_register(
         esp_hw_support
         esp_phy
         esp_pm
+        led_strip
+        nvs_flash
+        esp_http_server
+        spiffs
+        cjson
         freertos
         esp_codec_dev
         esp_io_expander

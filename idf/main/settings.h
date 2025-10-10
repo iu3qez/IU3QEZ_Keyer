@@ -39,8 +39,8 @@
 #define SIDETONE_VOLUME     80  // Volume iniziale (0-100%)
 
 // Rampe anti-click (in millisecondi)
-#define SIDETONE_RAMP_UP_MS   2   // Ramp up per evitare click
-#define SIDETONE_RAMP_DOWN_MS 4   // Ramp down per evitare click
+#define SIDETONE_RAMP_UP_MS   5   // Ramp up per evitare click
+#define SIDETONE_RAMP_DOWN_MS 8   // Ramp down per evitare click
 
 // Calcolo samples per rampe (dipende da sample rate)
 #define RAMP_UP_SAMPLES   ((I2S_SAMPLE_RATE * SIDETONE_RAMP_UP_MS) / 1000)   // 32 samples @ 16kHz
@@ -81,8 +81,12 @@
 // MORSE DECODER - SPACE DETECTION
 // ============================================================================
 
-#define DECODER_CHAR_SPACE_TOLERANCE  50   // Tolleranza % per spazio carattere
-#define DECODER_WORD_SPACE_TOLERANCE  40   // Tolleranza % per spazio parola
+#define DECODER_CHAR_SPACE_TOLERANCE_TENTHS  10  // Tolleranza in decimi di dot (es. 10 = ±1.0 dot)
+#define DECODER_WORD_SPACE_TOLERANCE_TENTHS  20  // Tolleranza in decimi di dot (es. 20 = ±2.0 dot)
+
+// Compatibilità con vecchio codice (interpreta i valori come decimi di dot)
+#define DECODER_CHAR_SPACE_TOLERANCE  DECODER_CHAR_SPACE_TOLERANCE_TENTHS
+#define DECODER_WORD_SPACE_TOLERANCE  DECODER_WORD_SPACE_TOLERANCE_TENTHS
 
 // ============================================================================
 // WIFI CONFIGURATION

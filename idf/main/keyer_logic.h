@@ -40,6 +40,7 @@ public:
     uint8_t getMode() const { return _mode; }
 
     void setMemoryWindow(uint8_t up_percent, uint8_t down_percent);
+    void getMemoryWindow(uint8_t* up_percent, uint8_t* down_percent) const;
     void setDebounce(uint32_t debounce_us);
     uint32_t getDebounce() const { return _debounce_us; }
 

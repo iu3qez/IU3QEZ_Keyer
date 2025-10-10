@@ -21,8 +21,8 @@ constexpr size_t kUsbTaskStackSize = 4096;
 constexpr UBaseType_t kUsbTaskPriority = 5;
 constexpr BaseType_t kUsbTaskCore = tskNO_AFFINITY;
 
-constexpr tinyusb_cdcacm_itf_t kMessagePort = TINYUSB_CDC_ACM_0;
-constexpr tinyusb_cdcacm_itf_t kTimelinePort = TINYUSB_CDC_ACM_1;
+constexpr tinyusb_cdcacm_itf_t kDebugPort = TINYUSB_CDC_ACM_0;      // General logging channel
+constexpr tinyusb_cdcacm_itf_t kServicePort = TINYUSB_CDC_ACM_1;    // Timeline/service channel
 
 TaskHandle_t s_usb_task_handle = nullptr;
 bool s_cdc_ready[TINYUSB_CDC_ACM_MAX] = {false};
@@ -208,19 +208,19 @@ void usb_timeline_task(void *arg) {
         }
 
         size_t total_bytes = 0;
-        if (s_cdc_ready[kTimelinePort]) {
+    if (s_cdc_ready[kServicePort]) {
             for (size_t i = 0; i < count; ++i) {
                 size_t line_len = formatEventLine(events[i], line, sizeof(line));
                 if (line_len == 0) {
                     continue;
                 }
-                size_t written = tinyusb_cdcacm_write_queue(kTimelinePort,
+                size_t written = tinyusb_cdcacm_write_queue(kServicePort,
                                                             reinterpret_cast<const uint8_t *>(line),
                                                             line_len);
                 total_bytes += written;
             }
             if (total_bytes > 0) {
-                (void)tinyusb_cdcacm_write_flush(kTimelinePort, 0);
+                (void)tinyusb_cdcacm_write_flush(kServicePort, 0);
             }
         }
     }
@@ -238,20 +238,20 @@ void cdc_line_state_changed_callback(int itf, cdcacm_event_t *event) {
         s_cdc_ready[itf] = connected;
     }
 
-    if (connected && itf == kTimelinePort) {
-        static const char banner[] = "\r\n=== Keyer timeline stream ready ===\r\n";
-        tinyusb_cdcacm_write_queue(kTimelinePort,
+    if (connected && itf == kServicePort) {
+        static const char banner[] = "\r\n=== Service channel ready (timeline events) ===\r\n";
+        tinyusb_cdcacm_write_queue(kServicePort,
                                    reinterpret_cast<const uint8_t *>(banner),
                                    sizeof(banner) - 1);
-        tinyusb_cdcacm_write_flush(kTimelinePort, 0);
+        tinyusb_cdcacm_write_flush(kServicePort, 0);
     }
 
-    if (connected && itf == kMessagePort) {
-        static const char msg_banner[] = "\r\n=== Log channel ready ===\r\n";
-        tinyusb_cdcacm_write_queue(kMessagePort,
+    if (connected && itf == kDebugPort) {
+        static const char msg_banner[] = "\r\n=== Debug channel ready ===\r\n";
+        tinyusb_cdcacm_write_queue(kDebugPort,
                                    reinterpret_cast<const uint8_t *>(msg_banner),
                                    sizeof(msg_banner) - 1);
-        tinyusb_cdcacm_write_flush(kMessagePort, 0);
+        tinyusb_cdcacm_write_flush(kDebugPort, 0);
     }
 }
 
@@ -269,7 +269,7 @@ static int usb_debug_log_vprintf(const char *fmt, va_list args) {
     }
     va_end(args_for_prev);
 
-    if (!s_cdc_ready[kMessagePort] || !tusb_cdc_acm_initialized(kMessagePort)) {
+    if (!s_cdc_ready[kDebugPort] || !tusb_cdc_acm_initialized(kDebugPort)) {
         return ret;
     }
 
@@ -288,11 +288,11 @@ static int usb_debug_log_vprintf(const char *fmt, va_list args) {
         to_write = sizeof(buffer) - 1;
     }
 
-    size_t written = tinyusb_cdcacm_write_queue(kMessagePort,
+    size_t written = tinyusb_cdcacm_write_queue(kDebugPort,
                                                 reinterpret_cast<const uint8_t *>(buffer),
                                                 to_write);
     if (written > 0) {
-        tinyusb_cdcacm_write_flush(kMessagePort, 0);
+        tinyusb_cdcacm_write_flush(kDebugPort, 0);
     }
 
     return ret;
@@ -318,7 +318,7 @@ esp_err_t usb_debug_init(TimelineBuffer *timeline) {
 
     tinyusb_config_cdcacm_t cdc_cfg = {
         .usb_dev = TINYUSB_USBDEV_0,
-        .cdc_port = kMessagePort,
+        .cdc_port = kDebugPort,
         .rx_unread_buf_sz = 64,
         .callback_rx = nullptr,
         .callback_rx_wanted_char = nullptr,
@@ -332,7 +332,7 @@ esp_err_t usb_debug_init(TimelineBuffer *timeline) {
         return err;
     }
 
-    cdc_cfg.cdc_port = kTimelinePort;
+    cdc_cfg.cdc_port = kServicePort;
     err = tusb_cdc_acm_init(&cdc_cfg);
     if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
         ESP_LOGE(TAG, "CDC1 init failed: %s", esp_err_to_name(err));
