@@ -41,6 +41,24 @@ static inline void decoderBroadcastPushExtended(TimelineBuffer* tl_websocket,
     }
 }
 
+static inline void emitPatternString(TimelineBuffer* tl_websocket,
+                                     TimelineBuffer* tl_usb,
+                                     const std::string& pattern,
+                                     uint32_t timestamp_us) {
+    if (pattern.empty()) {
+        return;
+    }
+    ESP_LOGW(TAG, "Unknown pattern: %s", pattern.c_str());
+    decoderBroadcastPushExtended(tl_websocket, tl_usb, EVENT_DECODED_CHAR,
+                                 static_cast<uint8_t>('('), timestamp_us);
+    for (char c : pattern) {
+        decoderBroadcastPushExtended(tl_websocket, tl_usb, EVENT_DECODED_CHAR,
+                                     static_cast<uint8_t>(c), timestamp_us);
+    }
+    decoderBroadcastPushExtended(tl_websocket, tl_usb, EVENT_DECODED_CHAR,
+                                 static_cast<uint8_t>(')'), timestamp_us);
+}
+
 MorseDecoder::MorseDecoder(TimelineBuffer* timeline)
     : _timeline(timeline),
       _timeline_websocket(nullptr),
@@ -144,16 +162,24 @@ void MorseDecoder::checkTimeout() {
              (unsigned long)diff(elapsed_us, char_space_target),
              (unsigned long)diff(elapsed_us, word_space_target));
 
+    std::string pattern = _current_char_pattern;
+    char decoded_char = '\0';
+    if (!pattern.empty()) {
+        decoded_char = decodePattern(pattern);
+    }
+
     bool emitted_char = false;
-    if (!_current_char_pattern.empty()) {
-        char decoded_char = decodePattern(_current_char_pattern);
+    if (!pattern.empty()) {
         if (decoded_char != '\0') {
             decoderBroadcastPushExtended(_timeline_websocket, _timeline_usb, EVENT_DECODED_CHAR,
                                          static_cast<uint8_t>(decoded_char), now_us);
             emitted_char = true;
+        } else {
+            emitPatternString(_timeline_websocket, _timeline_usb, pattern, now_us);
+            emitted_char = true;
         }
-        _current_char_pattern.clear();
     }
+    _current_char_pattern.clear();
 
     if (within_word) {
         decoderBroadcastPush(_timeline_websocket, _timeline_usb, EVENT_SPACE_WORD, FLAG_NONE, now_us);
@@ -172,8 +198,6 @@ void MorseDecoder::checkTimeout() {
         _space_char_timestamp_us = now_us;
         ESP_LOGD(TAG, "Timeout pending CHAR space (pause=%lu)", (unsigned long)elapsed_us);
         _timeout_decoded = true;
-    } else if (!emitted_char && !_current_char_pattern.empty()) {
-        _current_char_pattern.clear();
     }
 }
 
@@ -296,12 +320,19 @@ void MorseDecoder::detectSpace(uint32_t pause_duration_us, uint32_t timestamp_us
         }
     }
 
+    std::string pattern = _current_char_pattern;
+    char decoded_char = '\0';
+    if (!pattern.empty()) {
+        decoded_char = decodePattern(pattern);
+    }
+
     if (within_word) {
-        if (!_current_char_pattern.empty()) {
-            char decoded_char = decodePattern(_current_char_pattern);
+        if (!pattern.empty()) {
             if (decoded_char != '\0') {
                 decoderBroadcastPushExtended(_timeline_websocket, _timeline_usb, EVENT_DECODED_CHAR,
                                              static_cast<uint8_t>(decoded_char), timestamp_us);
+            } else {
+                emitPatternString(_timeline_websocket, _timeline_usb, pattern, timestamp_us);
             }
         }
 
@@ -318,11 +349,12 @@ void MorseDecoder::detectSpace(uint32_t pause_duration_us, uint32_t timestamp_us
     if (within_char) {
         decoderBroadcastPush(_timeline_websocket, _timeline_usb, EVENT_SPACE_CHAR, FLAG_NONE, timestamp_us);
         _char_spaces_detected++;
-        if (!_current_char_pattern.empty()) {
-            char decoded_char = decodePattern(_current_char_pattern);
+        if (!pattern.empty()) {
             if (decoded_char != '\0') {
                 decoderBroadcastPushExtended(_timeline_websocket, _timeline_usb, EVENT_DECODED_CHAR,
                                              static_cast<uint8_t>(decoded_char), timestamp_us);
+            } else {
+                emitPatternString(_timeline_websocket, _timeline_usb, pattern, timestamp_us);
             }
         }
         _current_char_pattern.clear();
@@ -395,5 +427,5 @@ char MorseDecoder::decodePattern(const std::string& pattern) const {
     if (it != _morse_table.end()) {
         return it->second;
     }
-    return '?';
+    return '\0';
 }
