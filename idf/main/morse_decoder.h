@@ -47,6 +47,8 @@ private:
     bool _key_is_down;
     uint32_t _dot_duration_us;
     bool _timeout_decoded;
+    bool _space_char_pending;
+    uint32_t _space_char_timestamp_us;
 
     std::string _current_char_pattern;
     uint32_t _last_element_start_us;

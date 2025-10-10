@@ -526,6 +526,9 @@ void websocket_task(void *param) {
                 cJSON_AddItemToArray(array, evt);
             }
         }
+        if (s_ctx.keyer) {
+            cJSON_AddNumberToObject(root, "wpm", s_ctx.keyer->getWPM());
+        }
         cJSON *stats = cJSON_AddObjectToObject(root, "buffer_stats");
         cJSON_AddNumberToObject(stats, "total_pushed", s_ctx.timeline->getTotalPushed());
         cJSON_AddNumberToObject(stats, "total_dropped", s_ctx.timeline->getTotalDropped());

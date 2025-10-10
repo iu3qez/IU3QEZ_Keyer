@@ -51,6 +51,8 @@ MorseDecoder::MorseDecoder(TimelineBuffer* timeline)
       _key_is_down(false),
       _dot_duration_us(0),
       _timeout_decoded(false),
+      _space_char_pending(false),
+      _space_char_timestamp_us(0),
       _current_char_pattern(),
       _last_element_start_us(0),
       _char_spaces_detected(0),
@@ -93,6 +95,7 @@ void MorseDecoder::reset() {
     _current_char_pattern.clear();
     _last_element_start_us = 0;
     _timeout_decoded = false;
+    _space_char_pending = false;
 }
 
 void MorseDecoder::checkTimeout() {
@@ -100,7 +103,8 @@ void MorseDecoder::checkTimeout() {
         return;
     }
 
-    if (_current_char_pattern.empty() || _timeout_decoded) {
+    if ((_current_char_pattern.empty() && !_space_char_pending) ||
+        (_timeout_decoded && !_space_char_pending)) {
         return;
     }
 
@@ -140,12 +144,15 @@ void MorseDecoder::checkTimeout() {
              (unsigned long)diff(elapsed_us, char_space_target),
              (unsigned long)diff(elapsed_us, word_space_target));
 
+    bool emitted_char = false;
     if (!_current_char_pattern.empty()) {
         char decoded_char = decodePattern(_current_char_pattern);
         if (decoded_char != '\0') {
             decoderBroadcastPushExtended(_timeline_websocket, _timeline_usb, EVENT_DECODED_CHAR,
                                          static_cast<uint8_t>(decoded_char), now_us);
+            emitted_char = true;
         }
+        _current_char_pattern.clear();
     }
 
     if (within_word) {
@@ -154,14 +161,20 @@ void MorseDecoder::checkTimeout() {
         decoderBroadcastPushExtended(_timeline_websocket, _timeline_usb, EVENT_DECODED_CHAR,
                                      static_cast<uint8_t>(' '), now_us);
         ESP_LOGD(TAG, "Timeout promoted to WORD space (pause=%lu)", (unsigned long)elapsed_us);
-    } else if (within_char) {
-        decoderBroadcastPush(_timeline_websocket, _timeline_usb, EVENT_SPACE_CHAR, FLAG_NONE, now_us);
-        _char_spaces_detected++;
-        ESP_LOGD(TAG, "Timeout promoted to CHAR space (pause=%lu)", (unsigned long)elapsed_us);
+        _space_char_pending = false;
+        _space_char_timestamp_us = 0;
+        _timeout_decoded = true;
+        return;
     }
 
-    _current_char_pattern.clear();
-    _timeout_decoded = true;
+    if (within_char) {
+        _space_char_pending = true;
+        _space_char_timestamp_us = now_us;
+        ESP_LOGD(TAG, "Timeout pending CHAR space (pause=%lu)", (unsigned long)elapsed_us);
+        _timeout_decoded = true;
+    } else if (!emitted_char && !_current_char_pattern.empty()) {
+        _current_char_pattern.clear();
+    }
 }
 
 void MorseDecoder::process() {
@@ -192,11 +205,22 @@ void MorseDecoder::process() {
             case EVENT_KEY_ON:
                 if (!_key_is_down) {
                     _key_is_down = true;
-                    if (_last_key_off_us > 0 && !_timeout_decoded) {
+                    bool gap_processed = false;
+                    if (_space_char_pending) {
+                        decoderBroadcastPush(_timeline_websocket, _timeline_usb, EVENT_SPACE_CHAR, FLAG_NONE,
+                                             _space_char_timestamp_us ? _space_char_timestamp_us : evt.timestamp_us);
+                        _char_spaces_detected++;
+                        ESP_LOGD(TAG, "Flushed pending CHAR space at %lu us", (unsigned long)_space_char_timestamp_us);
+                        _space_char_pending = false;
+                        _space_char_timestamp_us = 0;
+                        gap_processed = true;
+                    }
+                    if (_last_key_off_us > 0 && !_timeout_decoded && !gap_processed) {
                         uint32_t pause_duration_us = evt.timestamp_us - _last_key_off_us;
                         detectSpace(pause_duration_us, evt.timestamp_us);
                     }
                     _last_element_start_us = evt.timestamp_us;
+                    _timeout_decoded = false;
                 }
                 break;
 

@@ -142,6 +142,10 @@ class TimelineRenderer {
             return;
         }
 
+        if (typeof data.wpm === 'number' && data.wpm > 0) {
+            this.config.wpm = data.wpm;
+        }
+
         data.events.forEach(evt => {
             // DEBUG: stampa evento ricevuto se è DECODED_CHAR o SPACE
             if (evt.type === 'DECODED_CHAR' || evt.type === 'SPACE_CHAR' || evt.type === 'SPACE_WORD') {
@@ -330,18 +334,18 @@ class TimelineRenderer {
     drawTimeGrid(timeWindow) {
         const { start: windowStart, pixelsPerUs, durationUs } = timeWindow;
 
-        // Calculate DAH duration (3 dot units) at current WPM
-        // DOT duration = 1200ms / WPM
-        const dotDurationMs = 1200 / this.config.wpm;
-        const dashDurationUs = dotDurationMs * 3 * 1000; // DAH = 3 DOT in microseconds
+        // DOT duration = 1200ms / WPM (classical Morse relationship)
+        const safeWpm = this.config.wpm > 0 ? this.config.wpm : 1;
+        const dotDurationUs = (1200 / safeWpm) * 1000;
 
-        // Draw vertical lines every DAH duration
+        // Draw vertical lines every DOT duration
         this.ctx.strokeStyle = this.COLORS.GRID;
         this.ctx.lineWidth = 0.5;
 
-        const firstDash = Math.floor(windowStart / dashDurationUs) * dashDurationUs;
+        const windowEnd = windowStart + durationUs;
+        const firstDot = Math.floor(windowStart / dotDurationUs) * dotDurationUs;
 
-        for (let t = firstDash; t <= this.lastTimestamp; t += dashDurationUs) {
+        for (let t = firstDot; t <= windowEnd; t += dotDurationUs) {
             const x = (t - windowStart) * pixelsPerUs;
             if (x >= 0 && x <= this.width) {
                 this.ctx.beginPath();
