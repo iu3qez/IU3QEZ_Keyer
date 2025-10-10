@@ -72,7 +72,7 @@
 #define KEYER_MODE_DEFAULT   KEYER_MODE_IAMBIC_B
 
 // === DEBOUNCING ===
-#define PADDLE_DEBOUNCE_US   1000   // Debounce in microsecondi (1ms)
+#define PADDLE_DEBOUNCE_US   100   // Debounce in microsecondi (1ms)
 
 // === TIMER HARDWARE ===
 #define KEYER_TIMER_DIVIDER  80     // Prescaler per 1 MHz (80 MHz / 80 = 1 MHz)
@@ -81,8 +81,8 @@
 // MORSE DECODER - SPACE DETECTION
 // ============================================================================
 
-#define DECODER_CHAR_SPACE_TOLERANCE_TENTHS  10  // Tolleranza in decimi di dot (es. 10 = ±1.0 dot)
-#define DECODER_WORD_SPACE_TOLERANCE_TENTHS  20  // Tolleranza in decimi di dot (es. 20 = ±2.0 dot)
+#define DECODER_CHAR_SPACE_TOLERANCE_TENTHS  10  // Margine aggiuntivo in decimi di dot (es. 10 = +1 dot)
+#define DECODER_WORD_SPACE_TOLERANCE_TENTHS  20  // Margine aggiuntivo in decimi di dot (es. 20 = +2 dot)
 
 // Compatibilità con vecchio codice (interpreta i valori come decimi di dot)
 #define DECODER_CHAR_SPACE_TOLERANCE  DECODER_CHAR_SPACE_TOLERANCE_TENTHS

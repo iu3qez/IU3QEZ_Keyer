@@ -22,6 +22,7 @@ constexpr int WIFI_CONNECTED_BIT = BIT0;
 constexpr int WIFI_FAIL_BIT = BIT1;
 
 int s_retry_count = 0;
+static bool s_sta_connected = false;
 
 void handle_sta_events(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data) {
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
@@ -34,6 +35,7 @@ void handle_sta_events(void *arg, esp_event_base_t event_base, int32_t event_id,
         } else if (s_wifi_event_group) {
             xEventGroupSetBits(s_wifi_event_group, WIFI_FAIL_BIT);
         }
+        s_sta_connected = false;
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         auto *event = static_cast<ip_event_got_ip_t *>(event_data);
         ESP_LOGI(TAG, "Got IP: " IPSTR, IP2STR(&event->ip_info.ip));
@@ -46,6 +48,8 @@ void handle_sta_events(void *arg, esp_event_base_t event_base, int32_t event_id,
 
 esp_err_t start_ap_mode() {
     ESP_LOGI(TAG, "Starting Wi-Fi in AP mode");
+
+    s_sta_connected = false;
 
     esp_netif_create_default_wifi_ap();
 
@@ -74,6 +78,8 @@ esp_err_t start_ap_mode() {
 esp_err_t start_sta_mode() {
     ESP_LOGI(TAG, "Starting Wi-Fi in STA mode, connecting to '%s'", WIFI_STA_SSID);
 
+    s_sta_connected = false;
+
     esp_netif_create_default_wifi_sta();
 
     wifi_config_t sta_config = {};
@@ -99,11 +105,13 @@ esp_err_t start_sta_mode() {
 
     if (bits & WIFI_CONNECTED_BIT) {
         ESP_LOGI(TAG, "Connected to SSID '%s'", WIFI_STA_SSID);
+        s_sta_connected = true;
         return ESP_OK;
     }
 
     ESP_LOGW(TAG, "Failed to connect to SSID '%s'", WIFI_STA_SSID);
     ESP_ERROR_CHECK(esp_wifi_stop());
+    s_sta_connected = false;
     return ESP_FAIL;
 }
 
@@ -141,10 +149,15 @@ esp_err_t wifi_manager_start(void) {
     ESP_LOGW(TAG, "Falling back to AP mode");
     err = start_ap_mode();
     s_initialized = (err == ESP_OK);
+    s_sta_connected = false;
     return err;
 #else
     ESP_LOGE(TAG, "STA mode failed and fallback disabled");
     return err;
 #endif
 #endif
+}
+
+bool wifi_manager_sta_connected(void) {
+    return s_sta_connected;
 }

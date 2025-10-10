@@ -5,9 +5,16 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 
+#include "config.h"
 #include "usb_debug.h"
 
 static const char *TAG = "morse_decoder";
+
+#if ENABLE_MORSE_DECODER_DEBUG
+#define MORSE_LOGD(...) ESP_LOGD(TAG, __VA_ARGS__)
+#else
+#define MORSE_LOGD(...) do { } while (0)
+#endif
 
 static inline void decoderBroadcastPush(TimelineBuffer* tl_websocket,
                                         TimelineBuffer* tl_usb,
@@ -150,14 +157,14 @@ void MorseDecoder::checkTimeout() {
     }
 
     if (!within_char && !within_word) {
-        ESP_LOGD(TAG, "Timeout pause %lu us ignored (char diff=%lu word diff=%lu)",
+        MORSE_LOGD( "Timeout pause %lu us ignored (char diff=%lu word diff=%lu)",
                  (unsigned long)elapsed_us,
                  (unsigned long)diff(elapsed_us, char_space_target),
                  (unsigned long)diff(elapsed_us, word_space_target));
         return;
     }
 
-    ESP_LOGD(TAG, "Timeout space detected (%lu us) [char diff=%lu word diff=%lu]",
+    MORSE_LOGD( "Timeout space detected (%lu us) [char diff=%lu word diff=%lu]",
              (unsigned long)elapsed_us,
              (unsigned long)diff(elapsed_us, char_space_target),
              (unsigned long)diff(elapsed_us, word_space_target));
@@ -168,15 +175,12 @@ void MorseDecoder::checkTimeout() {
         decoded_char = decodePattern(pattern);
     }
 
-    bool emitted_char = false;
     if (!pattern.empty()) {
         if (decoded_char != '\0') {
             decoderBroadcastPushExtended(_timeline_websocket, _timeline_usb, EVENT_DECODED_CHAR,
                                          static_cast<uint8_t>(decoded_char), now_us);
-            emitted_char = true;
         } else {
             emitPatternString(_timeline_websocket, _timeline_usb, pattern, now_us);
-            emitted_char = true;
         }
     }
     _current_char_pattern.clear();
@@ -186,7 +190,7 @@ void MorseDecoder::checkTimeout() {
         _word_spaces_detected++;
         decoderBroadcastPushExtended(_timeline_websocket, _timeline_usb, EVENT_DECODED_CHAR,
                                      static_cast<uint8_t>(' '), now_us);
-        ESP_LOGD(TAG, "Timeout promoted to WORD space (pause=%lu)", (unsigned long)elapsed_us);
+        MORSE_LOGD( "Timeout promoted to WORD space (pause=%lu)", (unsigned long)elapsed_us);
         _space_char_pending = false;
         _space_char_timestamp_us = 0;
         _timeout_decoded = true;
@@ -196,7 +200,7 @@ void MorseDecoder::checkTimeout() {
     if (within_char) {
         _space_char_pending = true;
         _space_char_timestamp_us = now_us;
-        ESP_LOGD(TAG, "Timeout pending CHAR space (pause=%lu)", (unsigned long)elapsed_us);
+        MORSE_LOGD( "Timeout pending CHAR space (pause=%lu)", (unsigned long)elapsed_us);
         _timeout_decoded = true;
     }
 }
@@ -234,7 +238,7 @@ void MorseDecoder::process() {
                         decoderBroadcastPush(_timeline_websocket, _timeline_usb, EVENT_SPACE_CHAR, FLAG_NONE,
                                              _space_char_timestamp_us ? _space_char_timestamp_us : evt.timestamp_us);
                         _char_spaces_detected++;
-                        ESP_LOGD(TAG, "Flushed pending CHAR space at %lu us", (unsigned long)_space_char_timestamp_us);
+                        MORSE_LOGD( "Flushed pending CHAR space at %lu us", (unsigned long)_space_char_timestamp_us);
                         _space_char_pending = false;
                         _space_char_timestamp_us = 0;
                         gap_processed = true;
@@ -289,7 +293,7 @@ void MorseDecoder::detectSpace(uint32_t pause_duration_us, uint32_t timestamp_us
     bool within_word = (diff(pause_duration_us, word_space_target) <= word_tol_us);
     bool within_char = (diff(pause_duration_us, char_space_target) <= char_tol_us);
 
-    ESP_LOGD(TAG,
+    MORSE_LOGD(
              "detectSpace: pause=%lu char=%lu±%lu word=%lu±%lu withinChar=%d withinWord=%d patternLen=%zu",
              (unsigned long)pause_duration_us,
              (unsigned long)char_space_target, (unsigned long)char_tol_us,
@@ -298,21 +302,21 @@ void MorseDecoder::detectSpace(uint32_t pause_duration_us, uint32_t timestamp_us
 
     if (!within_word && pause_duration_us > word_space_target + word_tol_us) {
         within_word = true;
-        ESP_LOGD(TAG, "Pause %lu us promoted to WORD space (beyond upper tolerance)",
+        MORSE_LOGD( "Pause %lu us promoted to WORD space (beyond upper tolerance)",
                  (unsigned long)pause_duration_us);
     }
 
     if (!within_word && !within_char) {
         if (pause_duration_us > word_space_target) {
             within_word = true;
-            ESP_LOGD(TAG, "Pause %lu us treated as WORD space (between targets)",
+            MORSE_LOGD( "Pause %lu us treated as WORD space (between targets)",
                      (unsigned long)pause_duration_us);
         } else if (pause_duration_us > char_space_target) {
             within_char = true;
-            ESP_LOGD(TAG, "Pause %lu us treated as CHAR space (between targets)",
+            MORSE_LOGD( "Pause %lu us treated as CHAR space (between targets)",
                      (unsigned long)pause_duration_us);
         } else {
-            ESP_LOGD(TAG, "Pause %lu us ignored (char_target=%lu±%lu word_target=%lu±%lu)",
+            MORSE_LOGD( "Pause %lu us ignored (char_target=%lu±%lu word_target=%lu±%lu)",
                      (unsigned long)pause_duration_us,
                      (unsigned long)char_space_target, (unsigned long)char_tol_us,
                      (unsigned long)word_space_target, (unsigned long)word_tol_us);
@@ -341,7 +345,7 @@ void MorseDecoder::detectSpace(uint32_t pause_duration_us, uint32_t timestamp_us
         decoderBroadcastPushExtended(_timeline_websocket, _timeline_usb, EVENT_DECODED_CHAR,
                                      static_cast<uint8_t>(' '), timestamp_us);
         _current_char_pattern.clear();
-        ESP_LOGD(TAG, "Detected WORD space at %lu us (pause=%lu)", (unsigned long)timestamp_us,
+        MORSE_LOGD( "Detected WORD space at %lu us (pause=%lu)", (unsigned long)timestamp_us,
                  (unsigned long)pause_duration_us);
         return;
     }
@@ -358,7 +362,7 @@ void MorseDecoder::detectSpace(uint32_t pause_duration_us, uint32_t timestamp_us
             }
         }
         _current_char_pattern.clear();
-        ESP_LOGD(TAG, "Detected CHAR space at %lu us (pause=%lu)", (unsigned long)timestamp_us,
+        MORSE_LOGD( "Detected CHAR space at %lu us (pause=%lu)", (unsigned long)timestamp_us,
                  (unsigned long)pause_duration_us);
     }
 }

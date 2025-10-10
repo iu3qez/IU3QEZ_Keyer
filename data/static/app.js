@@ -123,13 +123,13 @@ async function loadConfiguration() {
         }
 
         if (config.char_space_tolerance_dots !== undefined) {
-            const value = Number(config.char_space_tolerance_dots).toFixed(1);
+            const value = Math.round(Number(config.char_space_tolerance_dots) || 0);
             document.getElementById('char_space_tolerance').value = value;
             document.getElementById('char_space_tolerance-value').value = value;
         }
 
         if (config.word_space_tolerance_dots !== undefined) {
-            const value = Number(config.word_space_tolerance_dots).toFixed(1);
+            const value = Math.round(Number(config.word_space_tolerance_dots) || 0);
             document.getElementById('word_space_tolerance').value = value;
             document.getElementById('word_space_tolerance-value').value = value;
         }
@@ -218,12 +218,12 @@ async function applyConfigImmediate(suppressMessages = false) {
         return Number.isNaN(value) ? 0 : value;
     };
 
-    const roundDotValue = (id) => {
-        const raw = parseFloat(document.getElementById(id).value);
-        if (Number.isNaN(raw)) {
+    const getDotValue = (id) => {
+        const raw = parseInt(document.getElementById(id).value, 10);
+        if (Number.isNaN(raw) || raw < 0) {
             return 0;
         }
-        return Math.round(raw * 10) / 10;
+        return raw;
     };
 
     const formData = {
@@ -236,8 +236,8 @@ async function applyConfigImmediate(suppressMessages = false) {
         frequency: getInt('frequency'),
         fade_in_ms: getInt('fade-in'),
         fade_out_ms: getInt('fade-out'),
-        char_space_tolerance_dots: roundDotValue('char_space_tolerance'),
-        word_space_tolerance_dots: roundDotValue('word_space_tolerance')
+        char_space_tolerance_dots: getDotValue('char_space_tolerance'),
+        word_space_tolerance_dots: getDotValue('word_space_tolerance')
     };
 
     try {

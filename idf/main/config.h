@@ -5,6 +5,18 @@
 #include "esp_err.h"
 #include "settings.h"
 
+#ifndef ENABLE_MORSE_DECODER_DEBUG
+#define ENABLE_MORSE_DECODER_DEBUG 0
+#endif
+
+#ifndef ENABLE_AUDIO_LOOP_DEBUG
+#define ENABLE_AUDIO_LOOP_DEBUG 1
+#endif
+
+#ifndef ENABLE_HTTPD_LOG_SUPPRESSION
+#define ENABLE_HTTPD_LOG_SUPPRESSION 1
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif

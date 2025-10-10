@@ -10,6 +10,7 @@
 #include "driver/i2c_master.h"
 #include "driver/i2s_std.h"
 #include "driver/gpio.h"
+#include "esp_timer.h"
 
 #include "esp_io_expander.h"
 #include "esp_io_expander_tca95xx_16bit.h"
@@ -53,6 +54,66 @@ static KeyerLogic g_keyer;
 static MorseDecoder g_decoder(&g_timeline_decoder);
 static tone_generator_t g_tone_gen;
 static led_strip_handle_t g_led_strip = nullptr;
+static bool g_keying_active = false;
+static uint32_t g_last_tone_off_us = 0;
+static uint8_t g_led_phase = 0;
+static uint8_t g_led_phase_pending = 0;
+static bool g_led_override_active = false;
+
+struct FeedbackStep {
+    bool tone_on;
+    bool led_on;
+    uint32_t duration_ms;
+};
+
+struct FeedbackState {
+    bool pending;
+    bool active;
+    size_t step_index;
+    uint64_t next_transition_us;
+};
+
+static constexpr uint32_t kWifiFeedbackUnitMs = 300;
+static constexpr FeedbackStep kWifiFeedbackSteps[] = {
+    {true, true, 3 * kWifiFeedbackUnitMs},
+    {false, false, 1 * kWifiFeedbackUnitMs},
+    {true, true, 1 * kWifiFeedbackUnitMs},
+    {false, false, 1 * kWifiFeedbackUnitMs},
+    {true, true, 3 * kWifiFeedbackUnitMs},
+    {false, false, 3 * kWifiFeedbackUnitMs},
+};
+static constexpr size_t kWifiFeedbackStepCount = sizeof(kWifiFeedbackSteps) / sizeof(kWifiFeedbackSteps[0]);
+
+static FeedbackState g_wifi_feedback_state = {
+    .pending = false,
+    .active = false,
+    .step_index = 0,
+    .next_transition_us = 0,
+};
+
+#if ENABLE_AUDIO_LOOP_DEBUG
+#define AUDIO_LOGD(...) ESP_LOGD(TAG, __VA_ARGS__)
+#define AUDIO_LOGW(...) ESP_LOGW(TAG, __VA_ARGS__)
+static constexpr uint64_t kAudioLoopBudgetFloorUs = 30000ULL;
+
+struct AudioLoopStats {
+    uint64_t expected_loop_us;
+    uint64_t max_loop_us;
+    uint64_t max_decode_us;
+    uint64_t max_fill_us;
+    uint64_t max_codec_us;
+    uint64_t last_loop_us;
+    uint64_t last_decode_us;
+    uint64_t last_fill_us;
+    uint64_t last_codec_us;
+    TickType_t last_report_ticks;
+};
+
+static AudioLoopStats g_audio_stats = {};
+#else
+#define AUDIO_LOGD(...) do { } while (0)
+#define AUDIO_LOGW(...) do { } while (0)
+#endif
 
 static void keyerCallback(bool keying);
 
@@ -129,13 +190,141 @@ static bool read_paddle_level(esp_io_expander_handle_t handle)
     return false;
 }
 
+static void led_set_color(uint8_t r, uint8_t g, uint8_t b)
+{
+    if (!g_led_strip) {
+        return;
+    }
+    for (int i = 0; i < NUM_LEDS; ++i) {
+        led_strip_set_pixel(g_led_strip, i, r, g, b);
+    }
+    led_strip_refresh(g_led_strip);
+}
+
+static void led_apply_phase(uint8_t phase)
+{
+    g_led_phase = phase;
+    switch (phase) {
+        case 0: // idle, less than one dot
+            led_set_color(0, 0, 60);
+            break;
+        case 1: // keying active
+            led_set_color(0, 0, 200);
+            break;
+        case 2: // >= 1 dot
+            led_set_color(0, 255, 0);
+            break;
+        case 3: // >= char space
+            led_set_color(255, 255, 0);
+            break;
+        case 4: // >= word space
+            led_set_color(255, 128, 0);
+            break;
+        default:
+            led_set_color(0, 0, 60);
+            break;
+    }
+}
+
+static void led_update_phase(uint8_t phase)
+{
+    g_led_phase_pending = phase;
+    if (g_led_override_active) {
+        return;
+    }
+    if (phase == g_led_phase) {
+        return;
+    }
+    led_apply_phase(phase);
+}
+
+static void start_wifi_feedback_sequence(void)
+{
+    if (!g_led_strip) {
+        g_wifi_feedback_state.pending = false;
+        return;
+    }
+    g_led_override_active = true;
+    g_wifi_feedback_state.active = true;
+    g_wifi_feedback_state.pending = false;
+    g_wifi_feedback_state.step_index = 0;
+    g_wifi_feedback_state.next_transition_us = 0;
+}
+
+static void process_wifi_feedback_sequence(uint64_t now_us)
+{
+    if (g_keying_active) {
+        if (g_wifi_feedback_state.active) {
+            g_wifi_feedback_state.active = false;
+            g_led_override_active = false;
+            led_apply_phase(g_led_phase_pending);
+            g_wifi_feedback_state.step_index = 0;
+            g_wifi_feedback_state.next_transition_us = 0;
+        }
+        g_wifi_feedback_state.pending = false;
+        return;
+    }
+
+    if (g_wifi_feedback_state.pending && !g_wifi_feedback_state.active) {
+        if (!g_keying_active && !tone_generator_is_active(&g_tone_gen)) {
+            start_wifi_feedback_sequence();
+        }
+    }
+
+    if (!g_wifi_feedback_state.active) {
+        return;
+    }
+
+    if (g_wifi_feedback_state.next_transition_us != 0 &&
+        now_us < g_wifi_feedback_state.next_transition_us) {
+        return;
+    }
+
+    if (g_wifi_feedback_state.step_index >= kWifiFeedbackStepCount) {
+        if (!g_keying_active) {
+            tone_generator_stop(&g_tone_gen);
+        }
+        g_wifi_feedback_state.active = false;
+        g_wifi_feedback_state.step_index = 0;
+        g_wifi_feedback_state.next_transition_us = 0;
+        g_led_override_active = false;
+        led_apply_phase(g_led_phase_pending);
+        return;
+    }
+
+    const FeedbackStep &step = kWifiFeedbackSteps[g_wifi_feedback_state.step_index];
+    if (!g_keying_active) {
+        if (step.tone_on) {
+            tone_generator_start(&g_tone_gen);
+        } else {
+            tone_generator_stop(&g_tone_gen);
+        }
+    }
+
+    if (g_led_strip) {
+        if (step.led_on) {
+            led_set_color(0, 160, 0);
+        } else {
+            led_set_color(0, 0, 0);
+        }
+    }
+
+    g_wifi_feedback_state.step_index++;
+    g_wifi_feedback_state.next_transition_us = now_us + (uint64_t)step.duration_ms * 1000ULL;
+}
+
 static void keyerCallback(bool keying)
 {
     gpio_set_level(static_cast<gpio_num_t>(KEY_PIN), keying ? 1 : 0);
     if (keying) {
         tone_generator_start(&g_tone_gen);
+        g_keying_active = true;
+        led_update_phase(1);
     } else {
         tone_generator_stop(&g_tone_gen);
+        g_keying_active = false;
+        g_last_tone_off_us = static_cast<uint32_t>(esp_timer_get_time());
+        led_update_phase(0);
     }
 }
 
@@ -163,36 +352,12 @@ static esp_err_t init_led_strip_device(void)
     return led_strip_new_rmt_device(&strip_config, &rmt_config, &g_led_strip);
 }
 
-static void neopixel_boot_rainbow(void)
+static void neopixel_boot_orange(void)
 {
     if (!g_led_strip) {
         return;
     }
-
-    const uint8_t rainbow[][3] = {
-        {255,   0,   0},
-        {255, 127,   0},
-        {255, 255,   0},
-        {  0, 255,   0},
-        {  0,   0, 255},
-        { 75,   0, 130},
-        {148,   0, 211},
-    };
-    constexpr size_t kRainbowCount = sizeof(rainbow) / sizeof(rainbow[0]);
-
-    for (int cycle = 0; cycle < 3; ++cycle) {
-        for (size_t color = 0; color < kRainbowCount; ++color) {
-            for (int led = 0; led < NUM_LEDS; ++led) {
-                size_t index = (color + led) % kRainbowCount;
-                led_strip_set_pixel(g_led_strip, led,
-                                    rainbow[index][0], rainbow[index][1], rainbow[index][2]);
-            }
-            led_strip_refresh(g_led_strip);
-            vTaskDelay(pdMS_TO_TICKS(60));
-        }
-    }
-
-    led_strip_clear(g_led_strip);
+    led_set_color(255, 120, 0);
 }
 
 void app_main(void)
@@ -208,7 +373,7 @@ void app_main(void)
 
     ESP_ERROR_CHECK(usb_debug_init(&g_timeline_usb));
     if (init_led_strip_device() == ESP_OK) {
-        neopixel_boot_rainbow();
+        neopixel_boot_orange();
     } else {
         ESP_LOGW(TAG, "NeoPixel strip init failed");
     }
@@ -328,6 +493,10 @@ void app_main(void)
 
     ESP_ERROR_CHECK(wifi_manager_start());
 
+    if (wifi_manager_sta_connected()) {
+        g_wifi_feedback_state.pending = true;
+    }
+
     web_server_config_t web_cfg = {
         .keyer = &g_keyer,
         .tone = &g_tone_gen,
@@ -353,27 +522,150 @@ void app_main(void)
     ESP_LOGI(TAG, "Starting sidetone playback (%u Hz) and monitoring paddle input",
              (unsigned)audio_cfg.tone_frequency_hz);
 
+#if ENABLE_AUDIO_LOOP_DEBUG
+    g_audio_stats = {};
+    if (audio_cfg.sample_rate_hz > 0) {
+        g_audio_stats.expected_loop_us = ((uint64_t)frame_count * 1000000ULL) / audio_cfg.sample_rate_hz;
+    } else {
+        g_audio_stats.expected_loop_us = 0;
+    }
+    g_audio_stats.last_report_ticks = xTaskGetTickCount();
+#endif
+
     bool codec_ok = true;
 
     while (true) {
+#if ENABLE_AUDIO_LOOP_DEBUG
+        uint64_t loop_start_us = esp_timer_get_time();
+        uint64_t decode_start_us = loop_start_us;
+#endif
+
         g_decoder.process();
         g_decoder.checkTimeout();
 
+#if ENABLE_AUDIO_LOOP_DEBUG
+        uint64_t decode_end_us = esp_timer_get_time();
+        uint64_t decode_duration_us = decode_end_us - decode_start_us;
+        uint64_t fill_start_us = decode_end_us;
+#endif
+
         tone_generator_fill(&g_tone_gen, frame_buffer, frame_count);
 
-        if (codec_write_checked(codec, frame_buffer, sample_count * sizeof(int16_t)) != ESP_CODEC_DEV_OK) {
+#if ENABLE_AUDIO_LOOP_DEBUG
+        uint64_t fill_end_us = esp_timer_get_time();
+        uint64_t fill_duration_us = fill_end_us - fill_start_us;
+        uint64_t now_us_full_64 = fill_end_us;
+#else
+        uint64_t now_us_full_64 = esp_timer_get_time();
+#endif
+
+        process_wifi_feedback_sequence(now_us_full_64);
+        uint32_t now_us_full = static_cast<uint32_t>(now_us_full_64);
+        if (g_keying_active) {
+            led_update_phase(1);
+        } else if (g_last_tone_off_us != 0) {
+            uint32_t elapsed = now_us_full - g_last_tone_off_us;
+            uint32_t dot_us = g_keyer.getDotDuration();
+            if (dot_us == 0) {
+                dot_us = 1;
+            }
+            uint8_t target_phase = 0;
+            if (elapsed >= dot_us * 7) {
+                target_phase = 4;
+            } else if (elapsed >= dot_us * 3) {
+                target_phase = 3;
+            } else if (elapsed >= dot_us) {
+                target_phase = 2;
+            }
+            led_update_phase(target_phase);
+        }
+
+        int codec_result;
+#if ENABLE_AUDIO_LOOP_DEBUG
+        uint64_t codec_start_us = esp_timer_get_time();
+        codec_result = codec_write_checked(codec, frame_buffer, sample_count * sizeof(int16_t));
+        uint64_t codec_end_us = esp_timer_get_time();
+        uint64_t codec_duration_us = codec_end_us - codec_start_us;
+#else
+        codec_result = codec_write_checked(codec, frame_buffer, sample_count * sizeof(int16_t));
+#endif
+
+#if ENABLE_AUDIO_LOOP_DEBUG
+        uint64_t loop_end_us = esp_timer_get_time();
+        uint64_t loop_duration_us = loop_end_us - loop_start_us;
+
+        g_audio_stats.last_decode_us = decode_duration_us;
+        g_audio_stats.last_fill_us = fill_duration_us;
+        g_audio_stats.last_codec_us = codec_duration_us;
+        g_audio_stats.last_loop_us = loop_duration_us;
+        if (decode_duration_us > g_audio_stats.max_decode_us) {
+            g_audio_stats.max_decode_us = decode_duration_us;
+        }
+        if (fill_duration_us > g_audio_stats.max_fill_us) {
+            g_audio_stats.max_fill_us = fill_duration_us;
+        }
+        if (codec_duration_us > g_audio_stats.max_codec_us) {
+            g_audio_stats.max_codec_us = codec_duration_us;
+        }
+        if (loop_duration_us > g_audio_stats.max_loop_us) {
+            g_audio_stats.max_loop_us = loop_duration_us;
+        }
+
+        uint64_t budget_us = g_audio_stats.expected_loop_us;
+        if (budget_us < kAudioLoopBudgetFloorUs) {
+            budget_us = kAudioLoopBudgetFloorUs;
+        }
+
+        if (budget_us > 0 &&
+            loop_duration_us > budget_us + 2000ULL) {
+            AUDIO_LOGW("Audio loop overrun: %llu us (target ~%llu us, theoretical ~%llu us), decode=%llu us, fill=%llu us, codec=%llu us",
+                       (unsigned long long)loop_duration_us,
+                       (unsigned long long)budget_us,
+                       (unsigned long long)g_audio_stats.expected_loop_us,
+                       (unsigned long long)decode_duration_us,
+                       (unsigned long long)fill_duration_us,
+                       (unsigned long long)codec_duration_us);
+        }
+#endif
+
+        TickType_t now_ticks = xTaskGetTickCount();
+
+#if ENABLE_AUDIO_LOOP_DEBUG
+        if (now_ticks - g_audio_stats.last_report_ticks >= pdMS_TO_TICKS(1000)) {
+            uint64_t budget_us = g_audio_stats.expected_loop_us;
+            if (budget_us < kAudioLoopBudgetFloorUs) {
+                budget_us = kAudioLoopBudgetFloorUs;
+            }
+            AUDIO_LOGD("Audio loop stats: last=%llu us (target ~%llu us) max=%llu us; decode last/max=%llu/%llu us; fill last/max=%llu/%llu us; codec last/max=%llu/%llu us",
+                       (unsigned long long)g_audio_stats.last_loop_us,
+                       (unsigned long long)budget_us,
+                       (unsigned long long)g_audio_stats.max_loop_us,
+                       (unsigned long long)g_audio_stats.last_decode_us,
+                       (unsigned long long)g_audio_stats.max_decode_us,
+                       (unsigned long long)g_audio_stats.last_fill_us,
+                       (unsigned long long)g_audio_stats.max_fill_us,
+                       (unsigned long long)g_audio_stats.last_codec_us,
+                       (unsigned long long)g_audio_stats.max_codec_us);
+            g_audio_stats.max_loop_us = 0;
+            g_audio_stats.max_decode_us = 0;
+            g_audio_stats.max_fill_us = 0;
+            g_audio_stats.max_codec_us = 0;
+            g_audio_stats.last_report_ticks = now_ticks;
+        }
+#endif
+
+        if (codec_result != ESP_CODEC_DEV_OK) {
             codec_ok = false;
             break;
         }
 
-        TickType_t now = xTaskGetTickCount();
-        if (now - last_report >= pdMS_TO_TICKS(500)) {
+        if (now_ticks - last_report >= pdMS_TO_TICKS(500)) {
             bool paddle = read_paddle_level(tca_handle);
             if (paddle != last_paddle) {
                 ESP_LOGI(TAG, "Paddle sense changed: %s", paddle ? "HIGH" : "LOW");
                 last_paddle = paddle;
             }
-            last_report = now;
+            last_report = now_ticks;
         }
     }
 

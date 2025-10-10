@@ -25,6 +25,20 @@ esp_err_t open_namespace(nvs_handle_t *handle, nvs_open_mode mode) {
     return err;
 }
 
+uint16_t normalize_dot_tolerance(uint16_t value, uint16_t max) {
+    if (value > max) {
+        value = max;
+    }
+    if (value == 0) {
+        return 0;
+    }
+    uint16_t rounded = static_cast<uint16_t>(((value + 5U) / 10U) * 10U);
+    if (rounded > max) {
+        rounded = max;
+    }
+    return rounded;
+}
+
 void clamp_config(persistent_config_t &cfg) {
     if (cfg.wpm < KEYER_WPM_MIN) {
         cfg.wpm = KEYER_WPM_MIN;
@@ -72,12 +86,8 @@ void clamp_config(persistent_config_t &cfg) {
     if (cfg.word_space_tolerance_tenths > 70) {
         cfg.word_space_tolerance_tenths = 70;
     }
-    if (cfg.char_space_tolerance_tenths == 0) {
-        cfg.char_space_tolerance_tenths = DECODER_CHAR_SPACE_TOLERANCE_TENTHS;
-    }
-    if (cfg.word_space_tolerance_tenths == 0) {
-        cfg.word_space_tolerance_tenths = DECODER_WORD_SPACE_TOLERANCE_TENTHS;
-    }
+    cfg.char_space_tolerance_tenths = normalize_dot_tolerance(cfg.char_space_tolerance_tenths, 50);
+    cfg.word_space_tolerance_tenths = normalize_dot_tolerance(cfg.word_space_tolerance_tenths, 70);
 }
 
 }  // namespace
@@ -180,9 +190,9 @@ esp_err_t config_store_load(persistent_config_t *cfg, bool *out_loaded) {
              cfg->wpm, cfg->mode, cfg->window_up_percent, cfg->window_down_percent,
              static_cast<unsigned long>(cfg->debounce_us), cfg->volume_percent,
              cfg->tone_frequency_hz, cfg->fade_in_ms, cfg->fade_out_ms);
-    ESP_LOGI(TAG, "  Decoder tol: char=%.1f dots, word=%.1f dots",
-             cfg->char_space_tolerance_tenths / 10.0f,
-             cfg->word_space_tolerance_tenths / 10.0f);
+    ESP_LOGI(TAG, "  Decoder extra dots: char=+%u, word=+%u",
+             cfg->char_space_tolerance_tenths / 10,
+             cfg->word_space_tolerance_tenths / 10);
     return ESP_OK;
 }
 
@@ -213,10 +223,10 @@ esp_err_t config_store_save(const persistent_config_t *cfg) {
 
     ret = nvs_commit(handle);
     if (ret == ESP_OK) {
-        ESP_LOGI(TAG, "Configuration saved (fade %u/%u ms, tol %.1f/%.1f dots)",
+        ESP_LOGI(TAG, "Configuration saved (fade %u/%u ms, extra dots +%u/+%u)",
                  temp.fade_in_ms, temp.fade_out_ms,
-                 temp.char_space_tolerance_tenths / 10.0f,
-                 temp.word_space_tolerance_tenths / 10.0f);
+                 temp.char_space_tolerance_tenths / 10,
+                 temp.word_space_tolerance_tenths / 10);
     }
 
 cleanup:
@@ -234,10 +244,10 @@ void config_store_apply_to_runtime(const persistent_config_t *cfg,
     persistent_config_t temp = *cfg;
     clamp_config(temp);
 
-    ESP_LOGI(TAG, "Applying config: WPM=%u mode=%u debounce=%lu vol=%u freq=%u fade=%u/%u char=%.1fdot word=%.1fdot",
+    ESP_LOGI(TAG, "Applying config: WPM=%u mode=%u debounce=%lu vol=%u freq=%u fade=%u/%u extra dots +%u/+%u",
              temp.wpm, temp.mode, (unsigned long)temp.debounce_us, temp.volume_percent, temp.tone_frequency_hz,
              temp.fade_in_ms, temp.fade_out_ms,
-             temp.char_space_tolerance_tenths / 10.0f, temp.word_space_tolerance_tenths / 10.0f);
+             temp.char_space_tolerance_tenths / 10, temp.word_space_tolerance_tenths / 10);
 
     if (keyer) {
         keyer->setWPM(temp.wpm);
@@ -283,8 +293,8 @@ void config_store_snapshot_from_runtime(persistent_config_t *cfg,
     }
 
     clamp_config(*cfg);
-    ESP_LOGI(TAG, "Snapshot runtime: fade=%u/%u char=%.1f word=%.1f",
+    ESP_LOGI(TAG, "Snapshot runtime: fade=%u/%u extra dots +%u/+%u",
              cfg->fade_in_ms, cfg->fade_out_ms,
-             cfg->char_space_tolerance_tenths / 10.0f,
-             cfg->word_space_tolerance_tenths / 10.0f);
+             cfg->char_space_tolerance_tenths / 10,
+             cfg->word_space_tolerance_tenths / 10);
 }

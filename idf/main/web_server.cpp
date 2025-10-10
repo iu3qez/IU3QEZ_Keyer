@@ -1,6 +1,7 @@
 #include "web_server.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -9,12 +10,14 @@
 
 #include "cJSON.h"
 #include "esp_check.h"
+#include "esp_event.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
 #include "esp_spiffs.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
+#include "config.h"
 #include "config_store.h"
 #include "keyer_logic.h"
 #include "morse_decoder.h"
@@ -29,7 +32,7 @@ constexpr TickType_t kWsTaskDelayMs = pdMS_TO_TICKS(100);
 
 struct WebServerContext {
     httpd_handle_t server = nullptr;
-    KeyerLogic *keyer = nullptr;
+   KeyerLogic *keyer = nullptr;
     tone_generator_t *tone = nullptr;
     MorseDecoder *decoder = nullptr;
     TimelineBuffer *timeline = nullptr;
@@ -39,6 +42,47 @@ struct WebServerContext {
 };
 
 WebServerContext s_ctx;
+
+#if ENABLE_HTTPD_LOG_SUPPRESSION
+static void httpd_event_swallow(void *handler_arg, esp_event_base_t event_base, int32_t event_id, void *event_data)
+{
+    (void)handler_arg;
+    (void)event_base;
+    (void)event_id;
+    (void)event_data;
+}
+
+void tune_httpd_log_levels() {
+    static const char *kHttpdTags[] = {
+        "httpd",
+        "httpd_parse",
+        "httpd_uri",
+        "httpd_txrx",
+        "httpd_sess",
+        "httpd_ws"
+    };
+    for (const char *tag : kHttpdTags) {
+        esp_log_level_set(tag, ESP_LOG_WARN);
+    }
+}
+
+void install_httpd_event_handler() {
+    static bool s_registered = false;
+    if (s_registered) {
+        return;
+    }
+    esp_err_t err = esp_event_handler_register(ESP_HTTP_SERVER_EVENT, ESP_EVENT_ANY_ID,
+                                               &httpd_event_swallow, nullptr);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to register HTTP server event handler: %s", esp_err_to_name(err));
+        return;
+    }
+    s_registered = true;
+}
+#else
+inline void tune_httpd_log_levels() {}
+inline void install_httpd_event_handler() {}
+#endif
 
 std::string get_content_type(const std::string &path) {
     auto ends_with = [](const std::string &value, const char *suffix) {
@@ -185,10 +229,12 @@ cJSON *build_config_json() {
     cJSON_AddNumberToObject(root, "fade_out_ms", tone_generator_get_fade_out_ms(s_ctx.tone));
 
     if (s_ctx.decoder) {
+        uint16_t char_extra_tenths = s_ctx.decoder->getCharSpaceToleranceDots();
+        uint16_t word_extra_tenths = s_ctx.decoder->getWordSpaceToleranceDots();
         cJSON_AddNumberToObject(root, "char_space_tolerance_dots",
-                                 s_ctx.decoder->getCharSpaceToleranceDots() / 10.0);
+                                 static_cast<int>(char_extra_tenths / 10));
         cJSON_AddNumberToObject(root, "word_space_tolerance_dots",
-                                 s_ctx.decoder->getWordSpaceToleranceDots() / 10.0);
+                                 static_cast<int>(word_extra_tenths / 10));
     }
 
     return root;
@@ -295,17 +341,21 @@ esp_err_t handle_post_config(httpd_req_t *req) {
     }
     if (s_ctx.decoder) {
         if (cJSON *item = get_number("char_space_tolerance_dots")) {
-            double dots = item->valuedouble;
-            if (dots < 0.0) dots = 0.0;
-            uint16_t tenths = static_cast<uint16_t>(dots * 10.0 + 0.5);
+            int extra_dots = static_cast<int>(std::lround(item->valuedouble));
+            if (extra_dots < 0) {
+                extra_dots = 0;
+            }
+            uint16_t tenths = static_cast<uint16_t>(extra_dots * 10);
             s_ctx.decoder->setCharSpaceToleranceDots(tenths);
             modified = true;
             raw_char_tol = item->valuedouble;
         }
         if (cJSON *item = get_number("word_space_tolerance_dots")) {
-            double dots = item->valuedouble;
-            if (dots < 0.0) dots = 0.0;
-            uint16_t tenths = static_cast<uint16_t>(dots * 10.0 + 0.5);
+            int extra_dots = static_cast<int>(std::lround(item->valuedouble));
+            if (extra_dots < 0) {
+                extra_dots = 0;
+            }
+            uint16_t tenths = static_cast<uint16_t>(extra_dots * 10);
             s_ctx.decoder->setWordSpaceToleranceDots(tenths);
             modified = true;
             raw_word_tol = item->valuedouble;
@@ -318,7 +368,9 @@ esp_err_t handle_post_config(httpd_req_t *req) {
         ESP_LOGI(TAG, "POST config: fade_in=%.1f fade_out=%.1f (applied %u/%u)", raw_fade_in, raw_fade_out, new_fade_in, new_fade_out);
     }
     if (raw_char_tol >= 0.0 || raw_word_tol >= 0.0) {
-        ESP_LOGI(TAG, "POST config: char_tol=%.1f dots, word_tol=%.1f dots", raw_char_tol, raw_word_tol);
+        ESP_LOGI(TAG, "POST config: char_tol=+%d dots, word_tol=+%d dots",
+                 raw_char_tol >= 0.0 ? static_cast<int>(std::lround(raw_char_tol)) : -1,
+                 raw_word_tol >= 0.0 ? static_cast<int>(std::lround(raw_word_tol)) : -1);
     }
 
     cJSON_Delete(root);
@@ -656,6 +708,9 @@ esp_err_t web_server_start(const web_server_config_t &config) {
         ESP_LOGW(TAG, "Web server already started");
         return ESP_OK;
     }
+
+    tune_httpd_log_levels();
+    install_httpd_event_handler();
 
     s_ctx.keyer = config.keyer;
     s_ctx.tone = config.tone;
