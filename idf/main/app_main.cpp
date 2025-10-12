@@ -4,6 +4,7 @@
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/queue.h"
 #include "esp_err.h"
 #include "esp_log.h"
 #include "esp_check.h"
@@ -45,6 +46,8 @@ constexpr uint32_t kTca9555Address = ESP_IO_EXPANDER_I2C_TCA9555_ADDRESS_000;
 constexpr uint32_t kTcaPinI2cSel = static_cast<uint32_t>(IO_EXPANDER_PIN_NUM_6);
 constexpr uint32_t kTcaPinPaEnable = static_cast<uint32_t>(IO_EXPANDER_PIN_NUM_8);
 constexpr uint32_t kTcaPinPaddleSense = static_cast<uint32_t>(IO_EXPANDER_PIN_NUM_9);
+constexpr size_t kAudioFramesPerBuffer = AUDIO_BUFFER_FRAMES_DEFAULT;
+constexpr size_t kAudioBufferCount = 4;
 }
 
 static TimelineBuffer g_timeline_decoder;
@@ -59,6 +62,11 @@ static uint32_t g_last_tone_off_us = 0;
 static uint8_t g_led_phase = 0;
 static uint8_t g_led_phase_pending = 0;
 static bool g_led_override_active = false;
+static i2s_chan_handle_t g_i2s_tx = nullptr;
+static QueueHandle_t g_audio_free_queue = nullptr;
+static QueueHandle_t g_audio_play_queue = nullptr;
+static TaskHandle_t g_audio_task_handle = nullptr;
+static int16_t g_audio_buffers[kAudioBufferCount][kAudioFramesPerBuffer * 2];
 
 struct FeedbackStep {
     bool tone_on;
@@ -94,7 +102,7 @@ static FeedbackState g_wifi_feedback_state = {
 #if ENABLE_AUDIO_LOOP_DEBUG
 #define AUDIO_LOGD(...) ESP_LOGD(TAG, __VA_ARGS__)
 #define AUDIO_LOGW(...) ESP_LOGW(TAG, __VA_ARGS__)
-static constexpr uint64_t kAudioLoopBudgetFloorUs = 30000ULL;
+static constexpr uint64_t kAudioLoopBudgetFloorUs = 8000ULL;
 
 struct AudioLoopStats {
     uint64_t expected_loop_us;
@@ -110,12 +118,21 @@ struct AudioLoopStats {
 };
 
 static AudioLoopStats g_audio_stats = {};
+struct AudioWriterStats {
+    uint64_t last_write_us;
+    uint64_t max_write_us;
+    uint32_t errors;
+};
+static AudioWriterStats g_audio_writer_stats = {};
+static portMUX_TYPE g_audio_stats_lock = portMUX_INITIALIZER_UNLOCKED;
 #else
 #define AUDIO_LOGD(...) do { } while (0)
 #define AUDIO_LOGW(...) do { } while (0)
 #endif
 
 static void keyerCallback(bool keying);
+static void audio_output_task(void *param);
+static bool init_audio_pipeline(void);
 
 extern "C" void app_main(void);
 
@@ -170,15 +187,6 @@ static esp_err_t init_i2s_tx(i2s_chan_handle_t *out_tx, uint32_t sample_rate)
 
     *out_tx = tx_handle;
     return ESP_OK;
-}
-
-static int codec_write_checked(esp_codec_dev_handle_t codec, void *data, size_t len)
-{
-    int ret = esp_codec_dev_write(codec, data, len);
-    if (ret != ESP_CODEC_DEV_OK) {
-        ESP_LOGE(TAG, "codec write failed: %d", ret);
-    }
-    return ret;
 }
 
 static bool read_paddle_level(esp_io_expander_handle_t handle)
@@ -313,6 +321,89 @@ static void process_wifi_feedback_sequence(uint64_t now_us)
     g_wifi_feedback_state.next_transition_us = now_us + (uint64_t)step.duration_ms * 1000ULL;
 }
 
+static void audio_output_task(void *param)
+{
+    (void)param;
+    const size_t bytes_per_buffer = kAudioFramesPerBuffer * 2 * sizeof(int16_t);
+    for (;;) {
+        size_t buffer_index = 0;
+        if (xQueueReceive(g_audio_play_queue, &buffer_index, portMAX_DELAY) != pdTRUE) {
+            continue;
+        }
+#if ENABLE_AUDIO_LOOP_DEBUG
+        uint64_t write_start = esp_timer_get_time();
+#endif
+        size_t bytes_written = 0;
+        esp_err_t err = i2s_channel_write(g_i2s_tx, g_audio_buffers[buffer_index],
+                                          bytes_per_buffer, &bytes_written, portMAX_DELAY);
+#if ENABLE_AUDIO_LOOP_DEBUG
+        uint64_t write_duration = esp_timer_get_time() - write_start;
+        portENTER_CRITICAL(&g_audio_stats_lock);
+        g_audio_writer_stats.last_write_us = write_duration;
+        if (write_duration > g_audio_writer_stats.max_write_us) {
+            g_audio_writer_stats.max_write_us = write_duration;
+        }
+        if (err != ESP_OK) {
+            g_audio_writer_stats.errors++;
+        }
+        portEXIT_CRITICAL(&g_audio_stats_lock);
+#endif
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "i2s_channel_write failed: %s", esp_err_to_name(err));
+        } else if (bytes_written != bytes_per_buffer) {
+            ESP_LOGW(TAG, "Partial I2S write: %u/%u bytes", (unsigned)bytes_written,
+                     (unsigned)bytes_per_buffer);
+        }
+        xQueueSend(g_audio_free_queue, &buffer_index, portMAX_DELAY);
+    }
+}
+
+static bool init_audio_pipeline(void)
+{
+    if (!g_i2s_tx) {
+        ESP_LOGE(TAG, "I2S channel not initialised");
+        return false;
+    }
+
+    if (!g_audio_free_queue) {
+        g_audio_free_queue = xQueueCreate(kAudioBufferCount, sizeof(size_t));
+        if (!g_audio_free_queue) {
+            ESP_LOGE(TAG, "Failed to create audio free queue");
+            return false;
+        }
+    } else {
+        xQueueReset(g_audio_free_queue);
+    }
+
+    if (!g_audio_play_queue) {
+        g_audio_play_queue = xQueueCreate(kAudioBufferCount, sizeof(size_t));
+        if (!g_audio_play_queue) {
+            ESP_LOGE(TAG, "Failed to create audio play queue");
+            return false;
+        }
+    } else {
+        xQueueReset(g_audio_play_queue);
+    }
+
+    for (size_t i = 0; i < kAudioBufferCount; ++i) {
+        size_t index = i;
+        xQueueSend(g_audio_free_queue, &index, portMAX_DELAY);
+    }
+
+    if (!g_audio_task_handle) {
+        BaseType_t created = xTaskCreatePinnedToCore(audio_output_task, "audio_out",
+                                                     4096, nullptr, 5, &g_audio_task_handle,
+                                                     tskNO_AFFINITY);
+        if (created != pdPASS) {
+            ESP_LOGE(TAG, "Failed to create audio output task");
+            g_audio_task_handle = nullptr;
+            return false;
+        }
+    }
+
+    return true;
+}
+
 static void keyerCallback(bool keying)
 {
     gpio_set_level(static_cast<gpio_num_t>(KEY_PIN), keying ? 1 : 0);
@@ -401,6 +492,11 @@ void app_main(void)
 
     i2s_chan_handle_t i2s_tx = nullptr;
     ESP_ERROR_CHECK(init_i2s_tx(&i2s_tx, audio_cfg.sample_rate_hz));
+    g_i2s_tx = i2s_tx;
+    esp_err_t i2s_enable_err = i2s_channel_enable(g_i2s_tx);
+    if (i2s_enable_err != ESP_OK && i2s_enable_err != ESP_ERR_INVALID_STATE) {
+        ESP_ERROR_CHECK(i2s_enable_err);
+    }
 
     audio_codec_i2c_cfg_t i2c_ctrl_cfg = {
         .port = kI2CPort,
@@ -506,15 +602,8 @@ void app_main(void)
     ESP_ERROR_CHECK(web_server_start(web_cfg));
 
     size_t frame_count = audio_cfg.buffer_frames;
-    size_t sample_count = frame_count * 2;
-    int16_t *frame_buffer = static_cast<int16_t*>(calloc(sample_count, sizeof(int16_t)));
-    ESP_ERROR_CHECK_WITHOUT_ABORT(frame_buffer ? ESP_OK : ESP_ERR_NO_MEM);
-    if (frame_buffer == nullptr) {
-        ESP_LOGE(TAG, "Unable to allocate audio buffer");
-        ESP_ERROR_CHECK((esp_err_t)esp_codec_dev_close(codec));
-        ESP_ERROR_CHECK(esp_io_expander_set_level(tca_handle, kTcaPinPaEnable, 0));
-        return;
-    }
+
+    ESP_ERROR_CHECK(init_audio_pipeline() ? ESP_OK : ESP_FAIL);
 
     bool last_paddle = read_paddle_level(tca_handle);
     TickType_t last_report = xTaskGetTickCount();
@@ -532,8 +621,6 @@ void app_main(void)
     g_audio_stats.last_report_ticks = xTaskGetTickCount();
 #endif
 
-    bool codec_ok = true;
-
     while (true) {
 #if ENABLE_AUDIO_LOOP_DEBUG
         uint64_t loop_start_us = esp_timer_get_time();
@@ -548,6 +635,12 @@ void app_main(void)
         uint64_t decode_duration_us = decode_end_us - decode_start_us;
         uint64_t fill_start_us = decode_end_us;
 #endif
+
+        size_t buffer_index = 0;
+        if (xQueueReceive(g_audio_free_queue, &buffer_index, portMAX_DELAY) != pdTRUE) {
+            continue;
+        }
+        int16_t *frame_buffer = g_audio_buffers[buffer_index];
 
         tone_generator_fill(&g_tone_gen, frame_buffer, frame_count);
 
@@ -580,32 +673,18 @@ void app_main(void)
             led_update_phase(target_phase);
         }
 
-        int codec_result;
-#if ENABLE_AUDIO_LOOP_DEBUG
-        uint64_t codec_start_us = esp_timer_get_time();
-        codec_result = codec_write_checked(codec, frame_buffer, sample_count * sizeof(int16_t));
-        uint64_t codec_end_us = esp_timer_get_time();
-        uint64_t codec_duration_us = codec_end_us - codec_start_us;
-#else
-        codec_result = codec_write_checked(codec, frame_buffer, sample_count * sizeof(int16_t));
-#endif
-
 #if ENABLE_AUDIO_LOOP_DEBUG
         uint64_t loop_end_us = esp_timer_get_time();
         uint64_t loop_duration_us = loop_end_us - loop_start_us;
 
         g_audio_stats.last_decode_us = decode_duration_us;
         g_audio_stats.last_fill_us = fill_duration_us;
-        g_audio_stats.last_codec_us = codec_duration_us;
         g_audio_stats.last_loop_us = loop_duration_us;
         if (decode_duration_us > g_audio_stats.max_decode_us) {
             g_audio_stats.max_decode_us = decode_duration_us;
         }
         if (fill_duration_us > g_audio_stats.max_fill_us) {
             g_audio_stats.max_fill_us = fill_duration_us;
-        }
-        if (codec_duration_us > g_audio_stats.max_codec_us) {
-            g_audio_stats.max_codec_us = codec_duration_us;
         }
         if (loop_duration_us > g_audio_stats.max_loop_us) {
             g_audio_stats.max_loop_us = loop_duration_us;
@@ -618,25 +697,38 @@ void app_main(void)
 
         if (budget_us > 0 &&
             loop_duration_us > budget_us + 2000ULL) {
-            AUDIO_LOGW("Audio loop overrun: %llu us (target ~%llu us, theoretical ~%llu us), decode=%llu us, fill=%llu us, codec=%llu us",
+            AUDIO_LOGW("Audio loop overrun: %llu us (target ~%llu us, theoretical ~%llu us), decode=%llu us, fill=%llu us",
                        (unsigned long long)loop_duration_us,
                        (unsigned long long)budget_us,
                        (unsigned long long)g_audio_stats.expected_loop_us,
                        (unsigned long long)decode_duration_us,
-                       (unsigned long long)fill_duration_us,
-                       (unsigned long long)codec_duration_us);
+                       (unsigned long long)fill_duration_us);
         }
 #endif
 
         TickType_t now_ticks = xTaskGetTickCount();
 
 #if ENABLE_AUDIO_LOOP_DEBUG
+        uint64_t writer_last = 0;
+        uint64_t writer_max = 0;
+        uint32_t writer_errors = 0;
+        portENTER_CRITICAL(&g_audio_stats_lock);
+        writer_last = g_audio_writer_stats.last_write_us;
+        writer_max = g_audio_writer_stats.max_write_us;
+        writer_errors = g_audio_writer_stats.errors;
+        g_audio_writer_stats.max_write_us = 0;
+        g_audio_writer_stats.errors = 0;
+        portEXIT_CRITICAL(&g_audio_stats_lock);
+        g_audio_stats.last_codec_us = writer_last;
+        if (writer_max > g_audio_stats.max_codec_us) {
+            g_audio_stats.max_codec_us = writer_max;
+        }
         if (now_ticks - g_audio_stats.last_report_ticks >= pdMS_TO_TICKS(1000)) {
             uint64_t budget_us = g_audio_stats.expected_loop_us;
             if (budget_us < kAudioLoopBudgetFloorUs) {
                 budget_us = kAudioLoopBudgetFloorUs;
             }
-            AUDIO_LOGD("Audio loop stats: last=%llu us (target ~%llu us) max=%llu us; decode last/max=%llu/%llu us; fill last/max=%llu/%llu us; codec last/max=%llu/%llu us",
+            AUDIO_LOGD("Audio loop stats: last=%llu us (target ~%llu us) max=%llu us; decode last/max=%llu/%llu us; fill last/max=%llu/%llu us; codec last/max=%llu/%llu us (errors=%u)",
                        (unsigned long long)g_audio_stats.last_loop_us,
                        (unsigned long long)budget_us,
                        (unsigned long long)g_audio_stats.max_loop_us,
@@ -645,7 +737,8 @@ void app_main(void)
                        (unsigned long long)g_audio_stats.last_fill_us,
                        (unsigned long long)g_audio_stats.max_fill_us,
                        (unsigned long long)g_audio_stats.last_codec_us,
-                       (unsigned long long)g_audio_stats.max_codec_us);
+                       (unsigned long long)g_audio_stats.max_codec_us,
+                       (unsigned)writer_errors);
             g_audio_stats.max_loop_us = 0;
             g_audio_stats.max_decode_us = 0;
             g_audio_stats.max_fill_us = 0;
@@ -654,10 +747,7 @@ void app_main(void)
         }
 #endif
 
-        if (codec_result != ESP_CODEC_DEV_OK) {
-            codec_ok = false;
-            break;
-        }
+        xQueueSend(g_audio_play_queue, &buffer_index, portMAX_DELAY);
 
         if (now_ticks - last_report >= pdMS_TO_TICKS(500)) {
             bool paddle = read_paddle_level(tca_handle);
@@ -668,26 +758,4 @@ void app_main(void)
             last_report = now_ticks;
         }
     }
-
-    tone_generator_stop(&g_tone_gen);
-    if (codec_ok) {
-        while (tone_generator_is_active(&g_tone_gen)) {
-            g_decoder.process();
-            g_decoder.checkTimeout();
-            tone_generator_fill(&g_tone_gen, frame_buffer, frame_count);
-            if (codec_write_checked(codec, frame_buffer, sample_count * sizeof(int16_t)) != ESP_CODEC_DEV_OK) {
-                codec_ok = false;
-                break;
-            }
-        }
-    }
-
-    if (!codec_ok) {
-        ESP_LOGE(TAG, "Codec write loop exited unexpectedly");
-    } else {
-        ESP_LOGI(TAG, "Codec write loop stopped cleanly");
-    }
-    ESP_ERROR_CHECK((esp_err_t)esp_codec_dev_close(codec));
-    ESP_ERROR_CHECK(esp_io_expander_set_level(tca_handle, kTcaPinPaEnable, 0));
-    free(frame_buffer);
 }
