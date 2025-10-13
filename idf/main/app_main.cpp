@@ -66,6 +66,7 @@ static i2s_chan_handle_t g_i2s_tx = nullptr;
 static QueueHandle_t g_audio_free_queue = nullptr;
 static QueueHandle_t g_audio_play_queue = nullptr;
 static TaskHandle_t g_audio_task_handle = nullptr;
+static TaskHandle_t g_decoder_task_handle = nullptr;
 static int16_t g_audio_buffers[kAudioBufferCount][kAudioFramesPerBuffer * 2];
 
 struct FeedbackStep {
@@ -132,6 +133,7 @@ static portMUX_TYPE g_audio_stats_lock = portMUX_INITIALIZER_UNLOCKED;
 
 static void keyerCallback(bool keying);
 static void audio_output_task(void *param);
+static void decoder_task(void *param);
 static bool init_audio_pipeline(void);
 
 extern "C" void app_main(void);
@@ -358,6 +360,29 @@ static void audio_output_task(void *param)
     }
 }
 
+static void decoder_task(void *param)
+{
+    (void)param;
+    ESP_LOGI(TAG, "Decoder task started on core %d", xPortGetCoreID());
+
+    TickType_t last_timeout_check = xTaskGetTickCount();
+
+    for (;;) {
+        // Process decoder pipeline
+        g_decoder.process();
+
+        // Check timeout periodicamente (ogni 10ms è sufficiente)
+        TickType_t now = xTaskGetTickCount();
+        if (now - last_timeout_check >= pdMS_TO_TICKS(10)) {
+            g_decoder.checkTimeout();
+            last_timeout_check = now;
+        }
+
+        // Yield rapido per mantenere responsività
+        vTaskDelay(pdMS_TO_TICKS(1));
+    }
+}
+
 static bool init_audio_pipeline(void)
 {
     if (!g_i2s_tx) {
@@ -392,8 +417,8 @@ static bool init_audio_pipeline(void)
 
     if (!g_audio_task_handle) {
         BaseType_t created = xTaskCreatePinnedToCore(audio_output_task, "audio_out",
-                                                     4096, nullptr, 5, &g_audio_task_handle,
-                                                     tskNO_AFFINITY);
+                                                     6144, nullptr, 5, &g_audio_task_handle,
+                                                     1);  // Pin audio task a core 1, stack aumentato
         if (created != pdPASS) {
             ESP_LOGE(TAG, "Failed to create audio output task");
             g_audio_task_handle = nullptr;
@@ -453,22 +478,32 @@ static void neopixel_boot_orange(void)
 
 void app_main(void)
 {
+    // Log via UART prima che USB sia pronto
+    printf("\n\n=== IU3QEZ KEYER BOOT ===\n");
     ESP_LOGI(TAG, "IU3QEZ ESP-IDF codec + expander bring-up test");
 
+    printf("Initializing NVS...\n");
     esp_err_t nvs_err = nvs_flash_init();
     if (nvs_err == ESP_ERR_NVS_NO_FREE_PAGES || nvs_err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
         ESP_ERROR_CHECK(nvs_flash_erase());
         nvs_err = nvs_flash_init();
     }
     ESP_ERROR_CHECK(nvs_err);
+    printf("NVS OK\n");
 
+    printf("Initializing USB debug...\n");
     ESP_ERROR_CHECK(usb_debug_init(&g_timeline_usb));
+    printf("USB debug OK\n");
+
+    printf("Initializing LED strip...\n");
     if (init_led_strip_device() == ESP_OK) {
         neopixel_boot_orange();
+        printf("LED strip OK\n");
     } else {
         ESP_LOGW(TAG, "NeoPixel strip init failed");
     }
 
+    printf("Initializing config...\n");
     config_init();
     audio_settings_t audio_cfg;
     ESP_ERROR_CHECK(config_audio_get(&audio_cfg));
@@ -490,9 +525,11 @@ void app_main(void)
     esp_io_expander_handle_t tca_handle = nullptr;
     ESP_ERROR_CHECK(init_tca9555(&tca_handle, i2c_bus));
 
+    printf("Initializing I2S @ %lu Hz...\n", (unsigned long)audio_cfg.sample_rate_hz);
     i2s_chan_handle_t i2s_tx = nullptr;
     ESP_ERROR_CHECK(init_i2s_tx(&i2s_tx, audio_cfg.sample_rate_hz));
     g_i2s_tx = i2s_tx;
+    printf("Enabling I2S channel...\n");
     esp_err_t i2s_enable_err = i2s_channel_enable(g_i2s_tx);
     if (i2s_enable_err != ESP_OK && i2s_enable_err != ESP_ERR_INVALID_STATE) {
         ESP_ERROR_CHECK(i2s_enable_err);
@@ -605,6 +642,24 @@ void app_main(void)
 
     ESP_ERROR_CHECK(init_audio_pipeline() ? ESP_OK : ESP_FAIL);
 
+    // Decoder task separato DISABILITATO - causa crash
+    #if 0
+    if (!g_decoder_task_handle) {
+        BaseType_t created = xTaskCreatePinnedToCore(decoder_task, "morse_decoder",
+                                                     6144, nullptr, 6,  // Priorità > audio, stack aumentato
+                                                     &g_decoder_task_handle,
+                                                     1);  // Pin a core 1
+        if (created != pdPASS) {
+            ESP_LOGE(TAG, "Failed to create decoder task");
+            g_decoder_task_handle = nullptr;
+            return;
+        }
+        ESP_LOGI(TAG, "Decoder task created");
+    }
+    #else
+    ESP_LOGI(TAG, "Decoder task DISABLED for debugging");
+    #endif
+
     bool last_paddle = read_paddle_level(tca_handle);
     TickType_t last_report = xTaskGetTickCount();
 
@@ -624,20 +679,21 @@ void app_main(void)
     while (true) {
 #if ENABLE_AUDIO_LOOP_DEBUG
         uint64_t loop_start_us = esp_timer_get_time();
-        uint64_t decode_start_us = loop_start_us;
 #endif
 
+        // Decoder processing nel main loop
         g_decoder.process();
         g_decoder.checkTimeout();
 
 #if ENABLE_AUDIO_LOOP_DEBUG
-        uint64_t decode_end_us = esp_timer_get_time();
-        uint64_t decode_duration_us = decode_end_us - decode_start_us;
-        uint64_t fill_start_us = decode_end_us;
+        uint64_t fill_start_us = esp_timer_get_time();
 #endif
 
         size_t buffer_index = 0;
-        if (xQueueReceive(g_audio_free_queue, &buffer_index, portMAX_DELAY) != pdTRUE) {
+        // Timeout breve per mantenere responsività del decoder anche se audio ha problemi
+        if (xQueueReceive(g_audio_free_queue, &buffer_index, pdMS_TO_TICKS(100)) != pdTRUE) {
+            // Audio buffer non disponibile, continua senza bloccarsi
+            vTaskDelay(pdMS_TO_TICKS(1));
             continue;
         }
         int16_t *frame_buffer = g_audio_buffers[buffer_index];
@@ -677,12 +733,8 @@ void app_main(void)
         uint64_t loop_end_us = esp_timer_get_time();
         uint64_t loop_duration_us = loop_end_us - loop_start_us;
 
-        g_audio_stats.last_decode_us = decode_duration_us;
         g_audio_stats.last_fill_us = fill_duration_us;
         g_audio_stats.last_loop_us = loop_duration_us;
-        if (decode_duration_us > g_audio_stats.max_decode_us) {
-            g_audio_stats.max_decode_us = decode_duration_us;
-        }
         if (fill_duration_us > g_audio_stats.max_fill_us) {
             g_audio_stats.max_fill_us = fill_duration_us;
         }
@@ -697,11 +749,10 @@ void app_main(void)
 
         if (budget_us > 0 &&
             loop_duration_us > budget_us + 2000ULL) {
-            AUDIO_LOGW("Audio loop overrun: %llu us (target ~%llu us, theoretical ~%llu us), decode=%llu us, fill=%llu us",
+            AUDIO_LOGW("Audio loop overrun: %llu us (target ~%llu us, theoretical ~%llu us), fill=%llu us",
                        (unsigned long long)loop_duration_us,
                        (unsigned long long)budget_us,
                        (unsigned long long)g_audio_stats.expected_loop_us,
-                       (unsigned long long)decode_duration_us,
                        (unsigned long long)fill_duration_us);
         }
 #endif
@@ -728,19 +779,16 @@ void app_main(void)
             if (budget_us < kAudioLoopBudgetFloorUs) {
                 budget_us = kAudioLoopBudgetFloorUs;
             }
-            AUDIO_LOGD("Audio loop stats: last=%llu us (target ~%llu us) max=%llu us; decode last/max=%llu/%llu us; fill last/max=%llu/%llu us; codec last/max=%llu/%llu us (errors=%u)",
+            AUDIO_LOGD("Audio loop stats: last=%llu us (target ~%llu us) max=%llu us; fill last/max=%llu/%llu us; codec last/max=%llu/%llu us (errors=%u)",
                        (unsigned long long)g_audio_stats.last_loop_us,
                        (unsigned long long)budget_us,
                        (unsigned long long)g_audio_stats.max_loop_us,
-                       (unsigned long long)g_audio_stats.last_decode_us,
-                       (unsigned long long)g_audio_stats.max_decode_us,
                        (unsigned long long)g_audio_stats.last_fill_us,
                        (unsigned long long)g_audio_stats.max_fill_us,
                        (unsigned long long)g_audio_stats.last_codec_us,
                        (unsigned long long)g_audio_stats.max_codec_us,
                        (unsigned)writer_errors);
             g_audio_stats.max_loop_us = 0;
-            g_audio_stats.max_decode_us = 0;
             g_audio_stats.max_fill_us = 0;
             g_audio_stats.max_codec_us = 0;
             g_audio_stats.last_report_ticks = now_ticks;

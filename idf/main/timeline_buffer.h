@@ -5,6 +5,8 @@
 #include <stddef.h>
 
 #include "esp_attr.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/portmacro.h"
 
 // Tipi di eventi timeline
 enum TimelineEventType : uint8_t {
@@ -72,6 +74,7 @@ private:
     volatile uint32_t _total_pushed;
     volatile uint32_t _total_dropped;
     volatile uint32_t _overruns;
+    portMUX_TYPE _spinlock;  // Protezione ISR-safe per accessi concorrenti
 
     inline uint32_t wrapIndex(uint32_t index) {
         return index & (TIMELINE_BUFFER_SIZE - 1);

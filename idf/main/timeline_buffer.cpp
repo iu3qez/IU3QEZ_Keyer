@@ -10,19 +10,22 @@ static inline uint32_t timeline_now_us() {
 
 TimelineBuffer::TimelineBuffer()
     : _head(0), _tail(0),
-      _total_pushed(0), _total_dropped(0), _overruns(0) {
+      _total_pushed(0), _total_dropped(0), _overruns(0),
+      _spinlock(portMUX_INITIALIZER_UNLOCKED) {
     std::memset(_buffer, 0, sizeof(_buffer));
 }
 
-void IRAM_ATTR TimelineBuffer::push(TimelineEventType type, TimelineEventFlags flags) {
+void TimelineBuffer::push(TimelineEventType type, TimelineEventFlags flags) {
     push(type, flags, timeline_now_us());
 }
 
-void IRAM_ATTR TimelineBuffer::pushExtended(TimelineEventTypeExtended type_ext, uint8_t payload) {
+void TimelineBuffer::pushExtended(TimelineEventTypeExtended type_ext, uint8_t payload) {
     pushExtended(type_ext, payload, timeline_now_us());
 }
 
-void IRAM_ATTR TimelineBuffer::pushExtended(TimelineEventTypeExtended type_ext, uint8_t payload, uint32_t timestamp_us) {
+void TimelineBuffer::pushExtended(TimelineEventTypeExtended type_ext, uint8_t payload, uint32_t timestamp_us) {
+    portENTER_CRITICAL_SAFE(&_spinlock);  // ISR-safe: funziona sia da ISR che da task
+
     uint32_t head = _head;
     uint32_t next_head = wrapIndex(head + 1);
 
@@ -40,9 +43,13 @@ void IRAM_ATTR TimelineBuffer::pushExtended(TimelineEventTypeExtended type_ext, 
 
     _head = next_head;
     _total_pushed++;
+
+    portEXIT_CRITICAL_SAFE(&_spinlock);
 }
 
-void IRAM_ATTR TimelineBuffer::push(TimelineEventType type, TimelineEventFlags flags, uint32_t timestamp_us) {
+void TimelineBuffer::push(TimelineEventType type, TimelineEventFlags flags, uint32_t timestamp_us) {
+    portENTER_CRITICAL_SAFE(&_spinlock);  // ISR-safe: funziona sia da ISR che da task
+
     uint32_t head = _head;
     uint32_t next_head = wrapIndex(head + 1);
 
@@ -60,12 +67,16 @@ void IRAM_ATTR TimelineBuffer::push(TimelineEventType type, TimelineEventFlags f
 
     _head = next_head;
     _total_pushed++;
+
+    portEXIT_CRITICAL_SAFE(&_spinlock);
 }
 
 size_t TimelineBuffer::read(TimelineEvent* buffer, size_t max_events) {
     if (!buffer || max_events == 0) {
         return 0;
     }
+
+    portENTER_CRITICAL(&_spinlock);  // Protezione da task context
 
     size_t count = 0;
     uint32_t tail = _tail;
@@ -77,6 +88,8 @@ size_t TimelineBuffer::read(TimelineEvent* buffer, size_t max_events) {
     }
 
     _tail = tail;
+
+    portEXIT_CRITICAL(&_spinlock);
     return count;
 }
 
