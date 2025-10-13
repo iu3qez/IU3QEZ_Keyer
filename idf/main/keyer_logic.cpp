@@ -96,6 +96,7 @@ bool KeyerLogic::begin(KeyerCallback keyingCallback) {
     timer_args.callback = &KeyerLogic::timerISR;
     timer_args.arg = this;
     timer_args.dispatch_method = ESP_TIMER_TASK;
+    timer_args.skip_unhandled_events = false;
     timer_args.name = "keyer_tick";
     ESP_ERROR_CHECK(esp_timer_create(&timer_args, &_timer));
     ESP_ERROR_CHECK(esp_timer_start_periodic(_timer, 1000));  // 1 ms tick

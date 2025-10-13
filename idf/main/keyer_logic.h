@@ -62,12 +62,12 @@ public:
 
 private:
     void calculateTimings();
-    bool isInMemoryWindow(uint32_t elapsed_us);
-    void startElement(Element_t element, uint32_t now_us);
-    void processNextElement(uint32_t now_us);
-    void handleTimerTick(uint32_t now_us);
+    bool IRAM_ATTR isInMemoryWindow(uint32_t elapsed_us);
+    void IRAM_ATTR startElement(Element_t element, uint32_t now_us);
+    void IRAM_ATTR processNextElement(uint32_t now_us);
+    void IRAM_ATTR handleTimerTick(uint32_t now_us);
 
-    static void timerISR(void* arg);
+    static void IRAM_ATTR timerISR(void* arg);
 
     uint8_t _wpm;
     uint32_t _dot_duration_us;
