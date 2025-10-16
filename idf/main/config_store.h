@@ -22,6 +22,13 @@ typedef struct {
     uint8_t fade_out_ms;
     uint16_t char_space_tolerance_tenths;
     uint16_t word_space_tolerance_tenths;
+
+    // RemoteCW network configuration
+    bool remotecw_enabled;
+    char remotecw_server_ip[64];
+    uint16_t remotecw_server_port;
+    char remotecw_username[84];
+    char remotecw_callsign[84];
 } persistent_config_t;
 
 void config_store_set_defaults(persistent_config_t *cfg);

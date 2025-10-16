@@ -142,8 +142,8 @@ void KeyerLogic::getMemoryWindow(uint8_t* up_percent, uint8_t* down_percent) con
 }
 
 void KeyerLogic::setDebounce(uint32_t debounce_us) {
-    if (debounce_us < 100) {
-        debounce_us = 100;
+    if (debounce_us < 10) {
+        debounce_us = 10;
     } else if (debounce_us > 10000) {
         debounce_us = 10000;
     }

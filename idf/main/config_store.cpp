@@ -8,6 +8,7 @@
 #include "morse_decoder.h"
 #include "settings.h"
 #include "tone_generator.h"
+#include "config.h"
 
 namespace {
 
@@ -57,8 +58,8 @@ void clamp_config(persistent_config_t &cfg) {
         cfg.window_down_percent = 100;
     }
 
-    if (cfg.debounce_us < 100) {
-        cfg.debounce_us = 100;
+    if (cfg.debounce_us < 10) {
+        cfg.debounce_us = 10;
     } else if (cfg.debounce_us > 10000) {
         cfg.debounce_us = 10000;
     }
@@ -107,6 +108,13 @@ void config_store_set_defaults(persistent_config_t *cfg) {
     cfg->fade_out_ms = SIDETONE_RAMP_DOWN_MS;
     cfg->char_space_tolerance_tenths = DECODER_CHAR_SPACE_TOLERANCE_TENTHS;
     cfg->word_space_tolerance_tenths = DECODER_WORD_SPACE_TOLERANCE_TENTHS;
+
+    // RemoteCW defaults
+    cfg->remotecw_enabled = false;
+    strncpy(cfg->remotecw_server_ip, REMOTECW_SERVER_IP, sizeof(cfg->remotecw_server_ip) - 1);
+    cfg->remotecw_server_port = REMOTECW_SERVER_PORT;
+    strncpy(cfg->remotecw_username, REMOTECW_USERNAME, sizeof(cfg->remotecw_username) - 1);
+    strncpy(cfg->remotecw_callsign, REMOTECW_CALLSIGN, sizeof(cfg->remotecw_callsign) - 1);
 }
 
 esp_err_t config_store_load(persistent_config_t *cfg, bool *out_loaded) {
@@ -173,6 +181,20 @@ esp_err_t config_store_load(persistent_config_t *cfg, bool *out_loaded) {
         }
     }
 
+    // Load RemoteCW configuration
+    if (nvs_get_u8(handle, "rcw_enabled", &u8_value) == ESP_OK) {
+        cfg->remotecw_enabled = (u8_value != 0);
+    }
+    size_t len = sizeof(cfg->remotecw_server_ip);
+    nvs_get_str(handle, "rcw_ip", cfg->remotecw_server_ip, &len);
+    if (nvs_get_u16(handle, "rcw_port", &u16_value) == ESP_OK) {
+        cfg->remotecw_server_port = u16_value;
+    }
+    len = sizeof(cfg->remotecw_username);
+    nvs_get_str(handle, "rcw_user", cfg->remotecw_username, &len);
+    len = sizeof(cfg->remotecw_callsign);
+    nvs_get_str(handle, "rcw_call", cfg->remotecw_callsign, &len);
+
     bool initialized = false;
     if (nvs_get_u8(handle, "initialized", &u8_value) == ESP_OK) {
         initialized = (u8_value != 0);
@@ -219,6 +241,14 @@ esp_err_t config_store_save(const persistent_config_t *cfg) {
     ESP_GOTO_ON_ERROR(nvs_set_u8(handle, "fade_out", temp.fade_out_ms), cleanup, TAG, "set fade_out");
     ESP_GOTO_ON_ERROR(nvs_set_u16(handle, "char_tol", temp.char_space_tolerance_tenths), cleanup, TAG, "set char_tol");
     ESP_GOTO_ON_ERROR(nvs_set_u16(handle, "word_tol", temp.word_space_tolerance_tenths), cleanup, TAG, "set word_tol");
+
+    // Save RemoteCW configuration
+    ESP_GOTO_ON_ERROR(nvs_set_u8(handle, "rcw_enabled", temp.remotecw_enabled ? 1 : 0), cleanup, TAG, "set rcw_enabled");
+    ESP_GOTO_ON_ERROR(nvs_set_str(handle, "rcw_ip", temp.remotecw_server_ip), cleanup, TAG, "set rcw_ip");
+    ESP_GOTO_ON_ERROR(nvs_set_u16(handle, "rcw_port", temp.remotecw_server_port), cleanup, TAG, "set rcw_port");
+    ESP_GOTO_ON_ERROR(nvs_set_str(handle, "rcw_user", temp.remotecw_username), cleanup, TAG, "set rcw_user");
+    ESP_GOTO_ON_ERROR(nvs_set_str(handle, "rcw_call", temp.remotecw_callsign), cleanup, TAG, "set rcw_call");
+
     ESP_GOTO_ON_ERROR(nvs_set_u8(handle, "initialized", 1), cleanup, TAG, "set initialized");
 
     ret = nvs_commit(handle);

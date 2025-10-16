@@ -412,6 +412,275 @@ esp_err_t handle_post_reset(httpd_req_t *req) {
     return send_json(req, response);
 }
 
+// RemoteCW configuration endpoints
+esp_err_t handle_get_remotecw_config(httpd_req_t *req) {
+    persistent_config_t cfg;
+    bool loaded = false;
+    config_store_load(&cfg, &loaded);
+
+    cJSON *root = cJSON_CreateObject();
+    cJSON_AddBoolToObject(root, "enabled", cfg.remotecw_enabled);
+    cJSON_AddStringToObject(root, "server_ip", cfg.remotecw_server_ip);
+    cJSON_AddNumberToObject(root, "server_port", cfg.remotecw_server_port);
+    cJSON_AddStringToObject(root, "username", cfg.remotecw_username);
+    cJSON_AddStringToObject(root, "callsign", cfg.remotecw_callsign);
+
+    return send_json(req, root);
+}
+
+esp_err_t handle_post_remotecw_config(httpd_req_t *req) {
+    int total_len = req->content_len;
+    if (total_len <= 0 || total_len > 2048) {
+        return send_error_json(req, 400, "Invalid body length");
+    }
+
+    std::string body;
+    body.resize(total_len);
+    int received = 0;
+    while (received < total_len) {
+        int ret = httpd_req_recv(req, body.data() + received, total_len - received);
+        if (ret <= 0) {
+            if (ret == HTTPD_SOCK_ERR_TIMEOUT) {
+                continue;
+            }
+            return send_error_json(req, 500, "Failed to receive body");
+        }
+        received += ret;
+    }
+
+    cJSON *root = cJSON_Parse(body.c_str());
+    if (!root) {
+        return send_error_json(req, 400, "Invalid JSON");
+    }
+
+    // Load current config
+    persistent_config_t cfg;
+    bool loaded = false;
+    config_store_load(&cfg, &loaded);
+
+    bool modified = false;
+
+    // Update RemoteCW fields from JSON
+    cJSON *enabled = cJSON_GetObjectItem(root, "enabled");
+    if (enabled && cJSON_IsBool(enabled)) {
+        cfg.remotecw_enabled = cJSON_IsTrue(enabled);
+        modified = true;
+    }
+
+    cJSON *server_ip = cJSON_GetObjectItem(root, "server_ip");
+    if (server_ip && cJSON_IsString(server_ip)) {
+        strncpy(cfg.remotecw_server_ip, server_ip->valuestring, sizeof(cfg.remotecw_server_ip) - 1);
+        cfg.remotecw_server_ip[sizeof(cfg.remotecw_server_ip) - 1] = '\0';
+        modified = true;
+    }
+
+    cJSON *server_port = cJSON_GetObjectItem(root, "server_port");
+    if (server_port && cJSON_IsNumber(server_port)) {
+        cfg.remotecw_server_port = static_cast<uint16_t>(server_port->valuedouble);
+        modified = true;
+    }
+
+    cJSON *username = cJSON_GetObjectItem(root, "username");
+    if (username && cJSON_IsString(username)) {
+        strncpy(cfg.remotecw_username, username->valuestring, sizeof(cfg.remotecw_username) - 1);
+        cfg.remotecw_username[sizeof(cfg.remotecw_username) - 1] = '\0';
+        modified = true;
+    }
+
+    cJSON *callsign = cJSON_GetObjectItem(root, "callsign");
+    if (callsign && cJSON_IsString(callsign)) {
+        strncpy(cfg.remotecw_callsign, callsign->valuestring, sizeof(cfg.remotecw_callsign) - 1);
+        cfg.remotecw_callsign[sizeof(cfg.remotecw_callsign) - 1] = '\0';
+        modified = true;
+    }
+
+    cJSON_Delete(root);
+
+    // Save configuration
+    esp_err_t err = ESP_OK;
+    if (modified) {
+        err = config_store_save(&cfg);
+    }
+
+    cJSON *response = cJSON_CreateObject();
+    cJSON_AddBoolToObject(response, "success", modified && err == ESP_OK);
+    cJSON_AddStringToObject(response, "message",
+        modified ? (err == ESP_OK ? "RemoteCW configuration saved" : esp_err_to_name(err))
+                 : "No valid parameters");
+
+    ESP_LOGI(TAG, "RemoteCW config updated: enabled=%d, ip=%s, port=%u",
+             cfg.remotecw_enabled, cfg.remotecw_server_ip, cfg.remotecw_server_port);
+
+    return send_json(req, response);
+}
+
+// RemoteCW configuration HTML page (embedded)
+esp_err_t handle_remotecw_html(httpd_req_t *req) {
+    const char *html = R"HTML(<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RemoteCW Configuration - IU3QEZ Keyer</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 800px; margin: 20px auto; padding: 20px; background: #f5f5f5; }
+        .container { background: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        h1 { color: #333; margin-top: 0; }
+        .form-group { margin-bottom: 20px; }
+        label { display: block; margin-bottom: 5px; font-weight: bold; color: #555; }
+        input[type="text"], input[type="number"] { width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; font-size: 14px; }
+        input[type="checkbox"] { width: 20px; height: 20px; cursor: pointer; }
+        .checkbox-group { display: flex; align-items: center; gap: 10px; }
+        .button-group { display: flex; gap: 10px; margin-top: 30px; }
+        button { padding: 12px 24px; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: bold; }
+        .btn-primary { background: #007bff; color: white; }
+        .btn-primary:hover { background: #0056b3; }
+        .btn-secondary { background: #6c757d; color: white; }
+        .btn-secondary:hover { background: #545b62; }
+        .btn-success { background: #28a745; color: white; }
+        .btn-success:hover { background: #218838; }
+        .message { padding: 12px; margin-top: 20px; border-radius: 4px; display: none; }
+        .message.success { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+        .message.error { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+        .info-box { background: #e7f3ff; padding: 15px; border-left: 4px solid #007bff; margin-bottom: 20px; }
+        .status { font-size: 12px; color: #666; margin-top: 5px; }
+        .back-link { display: inline-block; margin-bottom: 20px; color: #007bff; text-decoration: none; }
+        .back-link:hover { text-decoration: underline; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <a href="/" class="back-link">&larr; Back to Main</a>
+        <h1>RemoteCW Network Configuration</h1>
+
+        <div class="info-box">
+            <strong>RemoteCW Protocol</strong><br>
+            Connect this keyer to a RemoteCW server (DL4YHF protocol, port 7355) to transmit morse code remotely over TCP/IP.
+            Requires network connectivity and a running RemoteCW server.
+        </div>
+
+        <form id="configForm">
+            <div class="form-group">
+                <div class="checkbox-group">
+                    <input type="checkbox" id="enabled" name="enabled">
+                    <label for="enabled">Enable RemoteCW Client</label>
+                </div>
+                <div class="status" id="statusText">Client disabled</div>
+            </div>
+
+            <div class="form-group">
+                <label for="server_ip">Server IP Address</label>
+                <input type="text" id="server_ip" name="server_ip" placeholder="192.168.1.100" required>
+            </div>
+
+            <div class="form-group">
+                <label for="server_port">Server Port</label>
+                <input type="number" id="server_port" name="server_port" min="1" max="65535" value="7355" required>
+            </div>
+
+            <div class="form-group">
+                <label for="username">Username</label>
+                <input type="text" id="username" name="username" placeholder="IU3QEZ_ESP32" maxlength="80" required>
+            </div>
+
+            <div class="form-group">
+                <label for="callsign">Callsign</label>
+                <input type="text" id="callsign" name="callsign" placeholder="IU3QEZ" maxlength="80" required>
+            </div>
+
+            <div class="button-group">
+                <button type="submit" class="btn-primary">Save Configuration</button>
+                <button type="button" class="btn-secondary" onclick="loadConfig()">Reload</button>
+                <button type="button" class="btn-success" onclick="testConnection()">Test Connection</button>
+            </div>
+        </form>
+
+        <div id="message" class="message"></div>
+    </div>
+
+    <script>
+        function showMessage(text, isError = false) {
+            const msg = document.getElementById('message');
+            msg.textContent = text;
+            msg.className = 'message ' + (isError ? 'error' : 'success');
+            msg.style.display = 'block';
+            setTimeout(() => { msg.style.display = 'none'; }, 5000);
+        }
+
+        function updateStatus() {
+            const enabled = document.getElementById('enabled').checked;
+            const statusText = document.getElementById('statusText');
+            statusText.textContent = enabled ? 'Client enabled - will connect on next boot' : 'Client disabled';
+            statusText.style.color = enabled ? '#28a745' : '#666';
+        }
+
+        async function loadConfig() {
+            try {
+                const response = await fetch('/api/remotecw');
+                if (!response.ok) throw new Error('Failed to load configuration');
+
+                const config = await response.json();
+                document.getElementById('enabled').checked = config.enabled;
+                document.getElementById('server_ip').value = config.server_ip;
+                document.getElementById('server_port').value = config.server_port;
+                document.getElementById('username').value = config.username;
+                document.getElementById('callsign').value = config.callsign;
+                updateStatus();
+                showMessage('Configuration loaded successfully');
+            } catch (error) {
+                showMessage('Error loading configuration: ' + error.message, true);
+            }
+        }
+
+        async function testConnection() {
+            const ip = document.getElementById('server_ip').value;
+            const port = document.getElementById('server_port').value;
+            showMessage(`Testing connection to ${ip}:${port}... (Not implemented yet)`, false);
+        }
+
+        document.getElementById('configForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const config = {
+                enabled: document.getElementById('enabled').checked,
+                server_ip: document.getElementById('server_ip').value,
+                server_port: parseInt(document.getElementById('server_port').value),
+                username: document.getElementById('username').value,
+                callsign: document.getElementById('callsign').value
+            };
+
+            try {
+                const response = await fetch('/api/remotecw', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(config)
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    showMessage('Configuration saved! Restart required to apply changes.');
+                    updateStatus();
+                } else {
+                    showMessage('Error: ' + result.message, true);
+                }
+            } catch (error) {
+                showMessage('Error saving configuration: ' + error.message, true);
+            }
+        });
+
+        document.getElementById('enabled').addEventListener('change', updateStatus);
+
+        // Load configuration on page load
+        window.addEventListener('load', loadConfig);
+    </script>
+</body>
+</html>)HTML";
+
+    httpd_resp_set_type(req, "text/html");
+    return httpd_resp_send(req, html, HTTPD_RESP_USE_STRLEN);
+}
+
 esp_err_t static_file_handler(httpd_req_t *req) {
     std::string uri = req->uri;
     if (uri == "/") {
@@ -654,6 +923,30 @@ esp_err_t start_http_server() {
         .user_ctx = nullptr,
     };
     register_uri(s_ctx.server, reset_uri);
+
+    httpd_uri_t remotecw_get_uri = {
+        .uri = "/api/remotecw",
+        .method = HTTP_GET,
+        .handler = handle_get_remotecw_config,
+        .user_ctx = nullptr,
+    };
+    register_uri(s_ctx.server, remotecw_get_uri);
+
+    httpd_uri_t remotecw_post_uri = {
+        .uri = "/api/remotecw",
+        .method = HTTP_POST,
+        .handler = handle_post_remotecw_config,
+        .user_ctx = nullptr,
+    };
+    register_uri(s_ctx.server, remotecw_post_uri);
+
+    httpd_uri_t remotecw_html_uri = {
+        .uri = "/remotecw.html",
+        .method = HTTP_GET,
+        .handler = handle_remotecw_html,
+        .user_ctx = nullptr,
+    };
+    register_uri(s_ctx.server, remotecw_html_uri);
 
     httpd_uri_t ws_uri = {
         .uri = "/ws/timeline",

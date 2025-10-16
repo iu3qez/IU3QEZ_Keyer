@@ -10,6 +10,7 @@ idf_component_register(
         "config_store.cpp"
         "wifi_manager.cpp"
         "web_server.cpp"
+        "cwnet_client.c"
     INCLUDE_DIRS "."
     REQUIRES
         esp_wifi

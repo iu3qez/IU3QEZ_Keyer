@@ -32,6 +32,10 @@
 #include "nvs_flash.h"
 #include "led_strip.h"
 
+extern "C" {
+#include "cwnet_client.h"
+}
+
 #define TAG "codec_input_demo"
 
 namespace {
@@ -68,6 +72,12 @@ static QueueHandle_t g_audio_play_queue = nullptr;
 static TaskHandle_t g_audio_task_handle = nullptr;
 static TaskHandle_t g_decoder_task_handle = nullptr;
 static int16_t g_audio_buffers[kAudioBufferCount][kAudioFramesPerBuffer * 2];
+
+// RemoteCW client
+static cwnet_client_t g_remotecw_client;
+static bool g_remotecw_enabled = false;
+static int64_t g_last_keying_change_time_us = 0;
+static bool g_last_keying_state = false;
 
 struct FeedbackStep {
     bool tone_on;
@@ -431,6 +441,39 @@ static bool init_audio_pipeline(void)
 
 static void keyerCallback(bool keying)
 {
+    // Get current time in microseconds
+    int64_t now_us = esp_timer_get_time();
+
+    // Calculate duration since last state change
+    uint32_t duration_ms = 0;
+    if (g_last_keying_change_time_us > 0) {
+        int64_t duration_us = now_us - g_last_keying_change_time_us;
+        if (duration_us > 0) {
+            duration_ms = static_cast<uint32_t>(duration_us / 1000);
+        }
+    }
+
+    // Send event to RemoteCW server if enabled
+    if (g_remotecw_enabled && g_last_keying_change_time_us > 0) {
+        esp_err_t err = cwnet_client_send_keying_event(&g_remotecw_client,
+                                                        keying,
+                                                        duration_ms);
+        if (err != ESP_OK) {
+            // Log only occasionally to avoid flooding
+            static int64_t last_error_log = 0;
+            if (now_us - last_error_log > 5000000) {  // Every 5 seconds
+                ESP_LOGW(TAG, "Failed to send keying event to RemoteCW: %s",
+                        esp_err_to_name(err));
+                last_error_log = now_us;
+            }
+        }
+    }
+
+    // Update tracking state
+    g_last_keying_state = keying;
+    g_last_keying_change_time_us = now_us;
+
+    // Original keyer callback logic
     gpio_set_level(static_cast<gpio_num_t>(KEY_PIN), keying ? 1 : 0);
     if (keying) {
         tone_generator_start(&g_tone_gen);
@@ -605,6 +648,14 @@ void app_main(void)
     ESP_ERROR_CHECK(gpio_config(&key_conf));
     gpio_set_level(static_cast<gpio_num_t>(KEY_PIN), 0);
 
+    // TODO: RIMUOVERE DOPO TEST - Test KEY_PIN output at startup
+    ESP_LOGI(TAG, "Testing KEY_PIN (GPIO%d) - HIGH for 500ms", KEY_PIN);
+    gpio_set_level(static_cast<gpio_num_t>(KEY_PIN), 1);
+    vTaskDelay(pdMS_TO_TICKS(500));
+    gpio_set_level(static_cast<gpio_num_t>(KEY_PIN), 0);
+    ESP_LOGI(TAG, "KEY_PIN test complete - back to LOW");
+    // TODO: Fine test da rimuovere
+
     g_keyer.setTimelineTargets(&g_timeline_decoder, &g_timeline_websocket, &g_timeline_usb);
     ESP_ERROR_CHECK(g_keyer.begin(keyerCallback) ? ESP_OK : ESP_FAIL);
     // TODO: Evaluate pinning the keyer task or Wi-Fi task to a specific core.
@@ -628,6 +679,35 @@ void app_main(void)
 
     if (wifi_manager_sta_connected()) {
         g_wifi_feedback_state.pending = true;
+    }
+
+    // Initialize RemoteCW client if enabled
+    if (persisted_cfg.remotecw_enabled) {
+        ESP_LOGI(TAG, "Initializing RemoteCW client: %s:%u (user=%s, call=%s)",
+                 persisted_cfg.remotecw_server_ip,
+                 persisted_cfg.remotecw_server_port,
+                 persisted_cfg.remotecw_username,
+                 persisted_cfg.remotecw_callsign);
+
+        esp_err_t rc_err = cwnet_client_init(&g_remotecw_client,
+                                             persisted_cfg.remotecw_server_ip,
+                                             persisted_cfg.remotecw_server_port,
+                                             persisted_cfg.remotecw_username,
+                                             persisted_cfg.remotecw_callsign);
+
+        if (rc_err == ESP_OK) {
+            rc_err = cwnet_client_start(&g_remotecw_client);
+            if (rc_err == ESP_OK) {
+                g_remotecw_enabled = true;
+                ESP_LOGI(TAG, "RemoteCW client started successfully");
+            } else {
+                ESP_LOGE(TAG, "Failed to start RemoteCW client: %s", esp_err_to_name(rc_err));
+            }
+        } else {
+            ESP_LOGE(TAG, "Failed to initialize RemoteCW client: %s", esp_err_to_name(rc_err));
+        }
+    } else {
+        ESP_LOGI(TAG, "RemoteCW client disabled in configuration");
     }
 
     web_server_config_t web_cfg = {
