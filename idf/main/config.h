@@ -160,12 +160,12 @@ extern "C" {
 // REMOTE CW KEYER NETWORK CLIENT CONFIGURATION
 // ============================================================================
 #define REMOTECW_ENABLED              0                      // 0=disabled, 1=enabled
-#define REMOTECW_SERVER_IP            "192.168.1.100"        // Server IP address
+#define REMOTECW_SERVER_IP            "192.168.1.116"        // Server IP address
 #define REMOTECW_SERVER_PORT          7355                   // Default RemoteCW port (7355)
-#define REMOTECW_USERNAME             "IU3QEZ_ESP32"         // Username for login
-#define REMOTECW_CALLSIGN             "IU3QEZ"               // Callsign
+#define REMOTECW_USERNAME             "iu3qez"               // Username for login (lowercase!)
+#define REMOTECW_CALLSIGN             "iu3qez"               // Callsign (lowercase!)
 #define REMOTECW_RECONNECT_DELAY_MS   5000                   // Delay before reconnect attempt
-#define REMOTECW_PING_INTERVAL_MS     3000                   // Ping interval for latency measurement
+#define REMOTECW_PING_INTERVAL_MS     2000                   // Ping interval for latency measurement (must be < server timeout of 5000ms)
 #define REMOTECW_ACTIVITY_TIMEOUT_MS  10000                  // Disconnect if no activity
 #define REMOTECW_TX_BUFFER_SIZE       1024                   // Transmit buffer size
 #define REMOTECW_RX_BUFFER_SIZE       2048                   // Receive buffer size

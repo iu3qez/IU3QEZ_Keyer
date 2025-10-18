@@ -7,6 +7,10 @@
 #include <string>
 #include <vector>
 #include <sys/stat.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <unistd.h>
 
 #include "cJSON.h"
 #include "esp_check.h"
@@ -16,6 +20,8 @@
 #include "esp_spiffs.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "lwip/sockets.h"
+#include "lwip/netdb.h"
 
 #include "config.h"
 #include "config_store.h"
@@ -23,6 +29,7 @@
 #include "morse_decoder.h"
 #include "timeline_buffer.h"
 #include "tone_generator.h"
+#include "cwnet_client.h"
 
 namespace {
 
@@ -412,6 +419,12 @@ esp_err_t handle_post_reset(httpd_req_t *req) {
     return send_json(req, response);
 }
 
+// Forward declaration - defined in app_main.cpp
+extern "C" {
+    extern cwnet_client_t g_remotecw_client;
+    extern bool g_remotecw_enabled;
+}
+
 // RemoteCW configuration endpoints
 esp_err_t handle_get_remotecw_config(httpd_req_t *req) {
     persistent_config_t cfg;
@@ -424,6 +437,27 @@ esp_err_t handle_get_remotecw_config(httpd_req_t *req) {
     cJSON_AddNumberToObject(root, "server_port", cfg.remotecw_server_port);
     cJSON_AddStringToObject(root, "username", cfg.remotecw_username);
     cJSON_AddStringToObject(root, "callsign", cfg.remotecw_callsign);
+
+    // Add runtime status if enabled
+    if (g_remotecw_enabled) {
+        cJSON *status = cJSON_AddObjectToObject(root, "status");
+        cwnet_state_t state = cwnet_client_get_state(&g_remotecw_client);
+        const char *state_str = "UNKNOWN";
+        switch (state) {
+            case CWNET_STATE_DISCONNECTED: state_str = "DISCONNECTED"; break;
+            case CWNET_STATE_CONNECTING: state_str = "CONNECTING"; break;
+            case CWNET_STATE_CONNECTED: state_str = "CONNECTED"; break;
+            case CWNET_STATE_LOGIN_SENT: state_str = "LOGIN_SENT"; break;
+            case CWNET_STATE_LOGIN_CONFIRMED: state_str = "LOGIN_CONFIRMED"; break;
+            case CWNET_STATE_ERROR: state_str = "ERROR"; break;
+        }
+        cJSON_AddStringToObject(status, "state", state_str);
+        cJSON_AddBoolToObject(status, "can_transmit", cwnet_client_can_transmit(&g_remotecw_client));
+        int latency = cwnet_client_get_latency_ms(&g_remotecw_client);
+        if (latency >= 0) {
+            cJSON_AddNumberToObject(status, "latency_ms", latency);
+        }
+    }
 
     return send_json(req, root);
 }
@@ -510,6 +544,133 @@ esp_err_t handle_post_remotecw_config(httpd_req_t *req) {
 
     ESP_LOGI(TAG, "RemoteCW config updated: enabled=%d, ip=%s, port=%u",
              cfg.remotecw_enabled, cfg.remotecw_server_ip, cfg.remotecw_server_port);
+
+    return send_json(req, response);
+}
+
+esp_err_t handle_post_remotecw_test(httpd_req_t *req) {
+    int total_len = req->content_len;
+    ESP_LOGI(TAG, "RemoteCW test: content_len=%d", total_len);
+
+    if (total_len <= 0 || total_len > 2048) {
+        ESP_LOGE(TAG, "RemoteCW test: invalid body length %d", total_len);
+        return send_error_json(req, 400, "Invalid body length");
+    }
+
+    std::string body;
+    body.resize(total_len);
+    int received = 0;
+    while (received < total_len) {
+        int ret = httpd_req_recv(req, body.data() + received, total_len - received);
+        if (ret <= 0) {
+            if (ret == HTTPD_SOCK_ERR_TIMEOUT) {
+                continue;
+            }
+            ESP_LOGE(TAG, "RemoteCW test: failed to receive body");
+            return send_error_json(req, 500, "Failed to receive body");
+        }
+        received += ret;
+    }
+
+    ESP_LOGI(TAG, "RemoteCW test: received JSON: %s", body.c_str());
+
+    cJSON *root = cJSON_Parse(body.c_str());
+    if (!root) {
+        ESP_LOGE(TAG, "RemoteCW test: invalid JSON");
+        return send_error_json(req, 400, "Invalid JSON");
+    }
+
+    // Extract server IP and port from JSON
+    cJSON *server_ip_json = cJSON_GetObjectItem(root, "server_ip");
+    cJSON *server_port_json = cJSON_GetObjectItem(root, "server_port");
+
+    ESP_LOGI(TAG, "RemoteCW test: server_ip=%p, server_port=%p", server_ip_json, server_port_json);
+
+    if (!server_ip_json || !cJSON_IsString(server_ip_json)) {
+        ESP_LOGE(TAG, "RemoteCW test: invalid server_ip");
+        cJSON_Delete(root);
+        return send_error_json(req, 400, "Missing or invalid server_ip");
+    }
+
+    if (!server_port_json || !cJSON_IsNumber(server_port_json)) {
+        ESP_LOGE(TAG, "RemoteCW test: invalid server_port");
+        cJSON_Delete(root);
+        return send_error_json(req, 400, "Missing or invalid server_port");
+    }
+
+    // Copy strings before deleting JSON object
+    std::string server_ip = server_ip_json->valuestring;
+    uint16_t server_port = static_cast<uint16_t>(server_port_json->valuedouble);
+
+    cJSON_Delete(root);
+
+    // Attempt TCP connection to RemoteCW server
+    ESP_LOGI(TAG, "Testing connection to %s:%u", server_ip.c_str(), server_port);
+
+    int sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (sock < 0) {
+        ESP_LOGE(TAG, "Failed to create socket: errno %d", errno);
+        return send_error_json(req, 500, "Failed to create socket");
+    }
+
+    // Set connection timeout (5 seconds)
+    struct timeval timeout;
+    timeout.tv_sec = 5;
+    timeout.tv_usec = 0;
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+    setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+
+    struct sockaddr_in dest_addr;
+    dest_addr.sin_family = AF_INET;
+    dest_addr.sin_port = htons(server_port);
+
+    int ret = inet_pton(AF_INET, server_ip.c_str(), &dest_addr.sin_addr);
+    if (ret != 1) {
+        close(sock);
+        ESP_LOGE(TAG, "Invalid IP address: %s", server_ip.c_str());
+        return send_error_json(req, 400, "Invalid IP address format");
+    }
+
+    // Try to connect
+    int64_t start_time = esp_timer_get_time();
+    ret = connect(sock, (struct sockaddr *)&dest_addr, sizeof(dest_addr));
+    int64_t connect_time = (esp_timer_get_time() - start_time) / 1000; // Convert to ms
+
+    cJSON *response = cJSON_CreateObject();
+
+    if (ret == 0) {
+        // Connection successful
+        ESP_LOGI(TAG, "Connection successful to %s:%u (time: %lld ms)", server_ip.c_str(), server_port, connect_time);
+        cJSON_AddBoolToObject(response, "success", true);
+        cJSON_AddStringToObject(response, "message", "Connection successful");
+        cJSON_AddNumberToObject(response, "connect_time_ms", connect_time);
+        close(sock);
+    } else {
+        // Connection failed
+        ESP_LOGW(TAG, "Connection failed to %s:%u: errno %d", server_ip.c_str(), server_port, errno);
+        const char *error_msg;
+        switch (errno) {
+            case ETIMEDOUT:
+                error_msg = "Connection timed out - server not responding";
+                break;
+            case ECONNREFUSED:
+                error_msg = "Connection refused - server not accepting connections";
+                break;
+            case EHOSTUNREACH:
+                error_msg = "Host unreachable - check IP address and network";
+                break;
+            case ENETUNREACH:
+                error_msg = "Network unreachable";
+                break;
+            default:
+                error_msg = "Connection failed";
+                break;
+        }
+        cJSON_AddBoolToObject(response, "success", false);
+        cJSON_AddStringToObject(response, "message", error_msg);
+        cJSON_AddNumberToObject(response, "errno", errno);
+        close(sock);
+    }
 
     return send_json(req, response);
 }
@@ -625,7 +786,22 @@ esp_err_t handle_remotecw_html(httpd_req_t *req) {
                 document.getElementById('server_port').value = config.server_port;
                 document.getElementById('username').value = config.username;
                 document.getElementById('callsign').value = config.callsign;
-                updateStatus();
+
+                // Update status with runtime info if available
+                const statusText = document.getElementById('statusText');
+                if (config.status) {
+                    const state = config.status.state;
+                    const canTx = config.status.can_transmit;
+                    const latency = config.status.latency_ms;
+                    let statusMsg = `State: ${state}`;
+                    if (canTx) statusMsg += ' ✓ TX';
+                    if (latency) statusMsg += ` (${latency}ms)`;
+                    statusText.textContent = statusMsg;
+                    statusText.style.color = canTx ? '#28a745' : '#dc3545';
+                } else {
+                    updateStatus();
+                }
+
                 showMessage('Configuration loaded successfully');
             } catch (error) {
                 showMessage('Error loading configuration: ' + error.message, true);
@@ -634,8 +810,33 @@ esp_err_t handle_remotecw_html(httpd_req_t *req) {
 
         async function testConnection() {
             const ip = document.getElementById('server_ip').value;
-            const port = document.getElementById('server_port').value;
-            showMessage(`Testing connection to ${ip}:${port}... (Not implemented yet)`, false);
+            const port = parseInt(document.getElementById('server_port').value);
+
+            if (!ip || !port) {
+                showMessage('Please enter server IP and port first', true);
+                return;
+            }
+
+            showMessage(`Testing connection to ${ip}:${port}...`, false);
+
+            try {
+                const response = await fetch('/api/remotecw/test', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ server_ip: ip, server_port: port })
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    const time = result.connect_time_ms !== undefined ? ` (${result.connect_time_ms} ms)` : '';
+                    showMessage(`✓ ${result.message}${time}`, false);
+                } else {
+                    showMessage(`✗ ${result.message}`, true);
+                }
+            } catch (error) {
+                showMessage('Error testing connection: ' + error.message, true);
+            }
         }
 
         document.getElementById('configForm').addEventListener('submit', async (e) => {
@@ -879,6 +1080,7 @@ esp_err_t start_http_server() {
     config.stack_size = 8192;
     config.server_port = 80;
     config.ctrl_port = 32768;
+    config.max_uri_handlers = 11;  // Increase from default 8 to accommodate all endpoints
     config.lru_purge_enable = true;
     config.uri_match_fn = httpd_uri_match_wildcard;
 
@@ -939,6 +1141,14 @@ esp_err_t start_http_server() {
         .user_ctx = nullptr,
     };
     register_uri(s_ctx.server, remotecw_post_uri);
+
+    httpd_uri_t remotecw_test_uri = {
+        .uri = "/api/remotecw/test",
+        .method = HTTP_POST,
+        .handler = handle_post_remotecw_test,
+        .user_ctx = nullptr,
+    };
+    register_uri(s_ctx.server, remotecw_test_uri);
 
     httpd_uri_t remotecw_html_uri = {
         .uri = "/remotecw.html",

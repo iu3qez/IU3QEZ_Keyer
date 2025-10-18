@@ -154,10 +154,17 @@ static void handle_command(cwnet_client_t *client, uint8_t cmd, uint8_t *data, u
                 client->permissions = data[0];
                 client->state = CWNET_STATE_LOGIN_CONFIRMED;
                 ESP_LOGI(TAG, "Login confirmed! Permissions: 0x%02X", client->permissions);
+                ESP_LOGI(TAG, "  TALK: %s, TRANSMIT: %s, CTRL_RIG: %s, ADMIN: %s",
+                         (client->permissions & CWNET_PERMISSION_TALK) ? "YES" : "NO",
+                         (client->permissions & CWNET_PERMISSION_TRANSMIT) ? "YES" : "NO",
+                         (client->permissions & CWNET_PERMISSION_CTRL_RIG) ? "YES" : "NO",
+                         (client->permissions & CWNET_PERMISSION_ADMIN) ? "YES" : "NO");
 
                 if (client->permissions & CWNET_PERMISSION_TRANSMIT) {
                     ESP_LOGI(TAG, "Transmit permission granted");
                     xEventGroupSetBits(client->event_group, CWNET_EVENT_TX_PERMITTED);
+                } else {
+                    ESP_LOGW(TAG, "NO transmit permission! Cannot send keying events.");
                 }
                 xEventGroupSetBits(client->event_group, CWNET_EVENT_CONNECTED);
             }
@@ -180,9 +187,39 @@ static void handle_command(cwnet_client_t *client, uint8_t cmd, uint8_t *data, u
             break;
 
         case CWNET_CMD_PING:
-            // Echo ping back to server
+            // RemoteCW uses a 3-way ping with timestamps: REQUEST(0) -> RESPONSE1(1) -> RESPONSE2(2)
+            // We need to parse the ping type and timestamps to calculate latency properly
             if (len == 16) {
-                ESP_LOGD(TAG, "Ping received, echoing back");
+                uint8_t ping_type = data[0];  // 0=request, 1=1st response, 2=2nd response
+
+                if (ping_type == 0) {
+                    // SERVER sent REQUEST: respond with type=1 and add our timestamp
+                    ESP_LOGD(TAG, "Ping REQUEST received, sending 1st response");
+                    // Response will be handled by the parser adding to TX buffer
+                } else if (ping_type == 2) {
+                    // SERVER sent 2nd RESPONSE: calculate final latency
+                    // Extract timestamps: T0 at offset 4, T1 at offset 8, T2 at offset 12
+                    int32_t t0, t2;
+                    memcpy(&t0, &data[4], 4);
+                    memcpy(&t2, &data[12], 4);
+
+                    int iPingLatency_ms = t2 - t0;
+
+                    if (iPingLatency_ms > 0 && iPingLatency_ms < 5000) {  // Sanity check
+                        // Use server's smoothing algorithm (keep peak, slow decay)
+                        if (client->ping_latency_ms < 0 || iPingLatency_ms >= client->ping_latency_ms) {
+                            // Latency increased: jump to new value immediately
+                            client->ping_latency_ms = iPingLatency_ms;
+                        } else {
+                            // Latency decreased: decay slowly (same as server)
+                            client->ping_latency_ms -= (client->ping_latency_ms - iPingLatency_ms) / 10;
+                        }
+                        ESP_LOGI(TAG, "Ping: %d ms (RTT), smoothed: %d ms",
+                                 iPingLatency_ms, client->ping_latency_ms);
+                    }
+                } else {
+                    ESP_LOGD(TAG, "Ping type %d received (echoing back)", ping_type);
+                }
                 // Will be handled by adding to TX buffer in caller
             }
             break;
@@ -268,6 +305,9 @@ static void parse_byte(cwnet_client_t *client, uint8_t byte)
 // Network Functions
 // ============================================================================
 
+// Forward declarations
+static esp_err_t flush_tx_buffer(cwnet_client_t *client);
+
 static esp_err_t tcp_connect(cwnet_client_t *client)
 {
     struct sockaddr_in server_addr;
@@ -346,30 +386,61 @@ static esp_err_t tcp_connect(cwnet_client_t *client)
 
 static esp_err_t send_login(cwnet_client_t *client)
 {
-    // Build login string: "username,CALLSIGN\0"
-    char login_str[170];
-    int len = snprintf(login_str, sizeof(login_str), "%s,%s",
-                      client->username, client->callsign);
-    login_str[len++] = '\0';  // Null terminator included in payload
+    // Based on Wireshark capture: login uses FIXED-SIZE fields (84 bytes each)
+    // Total payload: 84 bytes username + 4 bytes padding + 4 bytes ??? = ~92 bytes
+    // But let's use exactly what was captured: 92 bytes total
 
-    // Build packet: CMD | SHORT_BLOCK | LENGTH | DATA
-    uint8_t packet[172];
-    packet[0] = CWNET_CMD_CONNECT | CWNET_CMD_MASK_SHORT_BLOCK;
-    packet[1] = (uint8_t)len;
-    memcpy(&packet[2], login_str, len);
+    #define LOGIN_FIELD_SIZE 84
+    #define LOGIN_PAYLOAD_SIZE 92
 
-    int total_len = 2 + len;
-    int sent = send(client->sock, packet, total_len, 0);
+    int total_packet_len = 2 + LOGIN_PAYLOAD_SIZE;  // cmd + length byte + payload
 
-    if (sent < 0) {
-        ESP_LOGE(TAG, "Failed to send login: errno %d", errno);
+    // Check if we have space in TX buffer
+    if (client->tx_buffer_used + total_packet_len > REMOTECW_TX_BUFFER_SIZE) {
+        ESP_LOGE(TAG, "TX buffer full, cannot send login");
         return ESP_FAIL;
     }
 
-    ESP_LOGI(TAG, "Login sent: user=%s, call=%s", client->username, client->callsign);
-    client->state = CWNET_STATE_LOGIN_SENT;
-    client->last_activity_time = esp_timer_get_time() / 1000;
+    // Build packet in TX buffer
+    uint8_t *p = &client->tx_buffer[client->tx_buffer_used];
+    *p++ = CWNET_CMD_CONNECT | CWNET_CMD_MASK_SHORT_BLOCK;
+    *p++ = (uint8_t)LOGIN_PAYLOAD_SIZE;
 
+    // Zero-fill entire payload
+    memset(p, 0, LOGIN_PAYLOAD_SIZE);
+
+    // Copy username into first 84-byte field (null-terminated, rest zero-padded)
+    int username_len = strlen(client->username);
+    if (username_len > LOGIN_FIELD_SIZE - 1) {
+        username_len = LOGIN_FIELD_SIZE - 1;
+    }
+    memcpy(p, client->username, username_len);
+    // p[username_len] = '\0'; // already zero from memset
+
+    // Copy callsign into second field (starts at offset 44 based on Wireshark)
+    // Actually, looking at the hex dump again: first "iu3qez" is at offset 2
+    // second "iu3qez" is at offset 44 (0x2c from start of payload)
+    int callsign_len = strlen(client->callsign);
+    if (callsign_len > LOGIN_FIELD_SIZE - 1) {
+        callsign_len = LOGIN_FIELD_SIZE - 1;
+    }
+    memcpy(p + 44, client->callsign, callsign_len);
+
+    client->tx_buffer_used += total_packet_len;
+    client->state = CWNET_STATE_LOGIN_SENT;
+
+    ESP_LOGI(TAG, "Login queued (fixed-size format): user=%s, call=%s",
+             client->username, client->callsign);
+    ESP_LOG_BUFFER_HEX_LEVEL(TAG, &client->tx_buffer[0], total_packet_len, ESP_LOG_INFO);
+
+    // Flush immediately to send login
+    esp_err_t ret = flush_tx_buffer(client);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to flush login packet");
+        return ret;
+    }
+
+    client->last_activity_time = esp_timer_get_time() / 1000;
     return ESP_OK;
 }
 
@@ -426,11 +497,68 @@ static esp_err_t receive_data(cwnet_client_t *client)
         return ESP_FAIL;
     }
 
-    ESP_LOGD(TAG, "Received %d bytes", received);
+    ESP_LOGI(TAG, "Received %d bytes from server", received);
+    ESP_LOG_BUFFER_HEX_LEVEL(TAG, temp_buf, received, ESP_LOG_INFO);
     client->last_activity_time = esp_timer_get_time() / 1000;
 
-    // Parse received bytes
-    for (int i = 0; i < received; i++) {
+    // WORKAROUND: Some servers echo back the login packet (94 bytes starting with 41 5c)
+    // Skip it if we just sent login and receive our echo back
+    static int skip_bytes = 0;
+    if (client->state == CWNET_STATE_LOGIN_SENT && received >= 2 &&
+        temp_buf[0] == 0x41 && temp_buf[1] == 0x5C) {
+        ESP_LOGW(TAG, "Server echoed login packet (%d bytes), permissions at offset 90", received);
+
+        // The echo is 90 bytes, then comes: 07 00 00 00 (permissions + padding)
+        // Byte 90 = 0x07 (permissions)
+        // Byte 91-93 = 0x00 0x00 0x00 (padding)
+        // Byte 94+ = next command (PRINT)
+        skip_bytes = 94;  // Skip echo (90 bytes) + permissions response (4 bytes)
+
+        // WORKAROUND #2: After echo, server sends permissions directly at offset 90
+        if (received > 90 + 3) {
+            uint8_t permissions = temp_buf[90];  // Permissions at byte 90!
+            ESP_LOGI(TAG, "Permissions at offset 90: 0x%02X", permissions);
+            if (permissions <= 0x0F) {  // Sanity check: permissions should be < 16
+                client->permissions = permissions;
+                client->state = CWNET_STATE_LOGIN_CONFIRMED;
+                ESP_LOGI(TAG, "Login confirmed! Permissions: 0x%02X (parsed after echo)", permissions);
+                ESP_LOGI(TAG, "  TALK: %s, TRANSMIT: %s, CTRL_RIG: %s, ADMIN: %s",
+                         (permissions & CWNET_PERMISSION_TALK) ? "YES" : "NO",
+                         (permissions & CWNET_PERMISSION_TRANSMIT) ? "YES" : "NO",
+                         (permissions & CWNET_PERMISSION_CTRL_RIG) ? "YES" : "NO",
+                         (permissions & CWNET_PERMISSION_ADMIN) ? "YES" : "NO");
+
+                if (permissions & CWNET_PERMISSION_TRANSMIT) {
+                    ESP_LOGI(TAG, "Transmit permission granted");
+                    xEventGroupSetBits(client->event_group, CWNET_EVENT_TX_PERMITTED);
+                } else {
+                    ESP_LOGW(TAG, "NO transmit permission!");
+                }
+                xEventGroupSetBits(client->event_group, CWNET_EVENT_CONNECTED);
+
+                // Skip 3 more bytes (permissions response: perm, 0x00, 0x00)
+                skip_bytes += 3;
+            } else {
+                ESP_LOGW(TAG, "Permissions byte 0x%02X seems invalid (> 0x0F), not parsing", permissions);
+            }
+        } else {
+            ESP_LOGW(TAG, "Received packet too short (%d bytes) to contain echo + permissions", received);
+        }
+    }
+
+    // Debug: log current state
+    ESP_LOGD(TAG, "Current state: %d, permissions: 0x%02X", client->state, client->permissions);
+
+    // Parse received bytes (skipping echo if needed)
+    int start_index = 0;
+    if (skip_bytes > 0) {
+        int to_skip = (skip_bytes > received) ? received : skip_bytes;
+        start_index = to_skip;
+        skip_bytes -= to_skip;
+        ESP_LOGD(TAG, "Skipped %d bytes, %d remaining to skip", to_skip, skip_bytes);
+    }
+
+    for (int i = start_index; i < received; i++) {
         parse_byte(client, temp_buf[i]);
     }
 
@@ -502,9 +630,43 @@ static void cwnet_task(void *arg)
                 if (client->state == CWNET_STATE_LOGIN_CONFIRMED &&
                     !fifo_is_empty(&client->keying_fifo)) {
 
+                    // Adaptive batching based on network latency
+                    // Higher latency = larger packets to avoid buffer underrun
+                    uint32_t max_events_per_packet;
+                    int latency = client->ping_latency_ms;
+
+                    if (latency < 0) {
+                        // Latency not measured yet, use conservative value
+                        max_events_per_packet = 10;
+                    } else if (latency < 50) {
+                        // Low latency: send small packets for low delay
+                        max_events_per_packet = 5;
+                    } else if (latency < 100) {
+                        // Medium latency: moderate packets
+                        max_events_per_packet = 15;
+                    } else if (latency < 200) {
+                        // High latency: larger packets
+                        max_events_per_packet = 30;
+                    } else {
+                        // Very high latency: maximum batching
+                        max_events_per_packet = 50;
+                    }
+
                     // Count how many events we can send
                     uint32_t count = fifo_count(&client->keying_fifo);
-                    if (count > 100) count = 100;  // Limit per packet
+
+                    // Don't send partial packets if we don't have enough events yet
+                    // (unless FIFO is getting full)
+                    uint32_t min_events = (max_events_per_packet > 10) ? 3 : 1;
+                    if (count < min_events && count < (REMOTECW_KEYING_FIFO_SIZE / 2)) {
+                        // Wait for more events to accumulate (better batching)
+                        break;
+                    }
+
+                    if (count > max_events_per_packet) {
+                        count = max_events_per_packet;
+                    }
+                    if (count > 100) count = 100;  // Hard limit (protocol limit)
 
                     // Check if we have space in TX buffer
                     uint32_t needed = 2 + count;  // cmd + len + data
@@ -523,18 +685,41 @@ static void cwnet_task(void *arg)
                         }
 
                         client->tx_buffer_used += (2 + count);
-                        ESP_LOGD(TAG, "Queued %lu keying events", count);
+                        ESP_LOGI(TAG, "Queued %lu keying events (latency=%dms, max_per_packet=%lu)",
+                                 count, client->ping_latency_ms, max_events_per_packet);
+                        ESP_LOG_BUFFER_HEX_LEVEL(TAG, &client->tx_buffer[client->tx_buffer_used - (2 + count)],
+                                                 2 + count, ESP_LOG_INFO);
                     }
                 }
 
                 // Flush TX buffer
                 flush_tx_buffer(client);
 
-                // Send periodic ping
+                // Send periodic ping to keep connection alive
                 if (client->state == CWNET_STATE_LOGIN_CONFIRMED &&
                     now - client->last_ping_time > REMOTECW_PING_INTERVAL_MS) {
-                    // TODO: Implement proper ping with timestamps
-                    client->last_ping_time = now;
+
+                    // Build ping packet with timestamp (16 bytes)
+                    // Format: CMD_PING | SHORT_BLOCK | 16 | 16-byte timestamp
+                    uint32_t needed = 2 + 16;  // cmd + len + 16 bytes
+                    if (client->tx_buffer_used + needed <= REMOTECW_TX_BUFFER_SIZE) {
+                        uint8_t *p = &client->tx_buffer[client->tx_buffer_used];
+                        *p++ = CWNET_CMD_PING | CWNET_CMD_MASK_SHORT_BLOCK;
+                        *p++ = 16;  // Ping payload is 16 bytes
+
+                        // Send current timestamp (8 bytes) + 8 bytes padding
+                        int64_t timestamp = esp_timer_get_time();
+                        memcpy(p, &timestamp, sizeof(timestamp));
+                        p += sizeof(timestamp);
+                        memset(p, 0, 8);  // Padding
+
+                        client->tx_buffer_used += needed;
+                        client->last_ping_time = now;
+                        ESP_LOGD(TAG, "Queued ping keepalive");
+
+                        // Flush immediately to ensure ping is sent without delay
+                        flush_tx_buffer(client);
+                    }
                 }
 
                 break;
@@ -656,6 +841,32 @@ bool cwnet_client_can_transmit(cwnet_client_t *client)
            (client->permissions & CWNET_PERMISSION_TRANSMIT);
 }
 
+static esp_err_t send_ptt_command(cwnet_client_t *client, bool ptt_on)
+{
+    // Send "set_ptt 1\n" or "set_ptt 0\n" as PTT command (0x06)
+    // Based on Wireshark capture: 46 0b 73 65 74 5f 70 74 74 20 31 0a 00
+    const char *cmd = ptt_on ? "set_ptt 1\n" : "set_ptt 0\n";
+    int cmd_len = strlen(cmd) + 1;  // Include null terminator (11 bytes)
+
+    // Check if we have space in TX buffer
+    uint32_t needed = 2 + cmd_len;  // cmd byte + len byte + string
+    if (client->tx_buffer_used + needed > REMOTECW_TX_BUFFER_SIZE) {
+        ESP_LOGW(TAG, "TX buffer full, cannot send PTT command");
+        return ESP_FAIL;
+    }
+
+    // Build PTT command (0x46 = 0x06 | SHORT_BLOCK)
+    uint8_t *p = &client->tx_buffer[client->tx_buffer_used];
+    *p++ = CWNET_CMD_PTT | CWNET_CMD_MASK_SHORT_BLOCK;  // 0x46
+    *p++ = (uint8_t)cmd_len;  // 0x0b (11 bytes)
+    memcpy(p, cmd, cmd_len);  // "set_ptt 1\n\0"
+
+    client->tx_buffer_used += needed;
+    ESP_LOGI(TAG, "Sent PTT command: %s (0x%02X)", ptt_on ? "ON" : "OFF", CWNET_CMD_PTT | CWNET_CMD_MASK_SHORT_BLOCK);
+
+    return ESP_OK;
+}
+
 esp_err_t cwnet_client_send_keying_event(cwnet_client_t *client,
                                          bool key_down,
                                          uint32_t duration_ms)
@@ -685,4 +896,22 @@ esp_err_t cwnet_client_send_keying_event(cwnet_client_t *client,
 int cwnet_client_get_latency_ms(cwnet_client_t *client)
 {
     return client ? client->ping_latency_ms : -1;
+}
+
+esp_err_t cwnet_client_send_ptt(cwnet_client_t *client, bool ptt_on)
+{
+    if (!client) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    if (!cwnet_client_can_transmit(client)) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    esp_err_t err = send_ptt_command(client, ptt_on);
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "PTT %s", ptt_on ? "ON" : "OFF");
+    }
+
+    return err;
 }

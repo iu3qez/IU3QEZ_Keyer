@@ -32,6 +32,7 @@ extern "C" {
 #define CWNET_CMD_PING     0x03  // Ping test
 #define CWNET_CMD_PRINT    0x04  // Text message
 #define CWNET_CMD_TX_INFO  0x05  // Who has the key
+#define CWNET_CMD_PTT      0x06  // PTT control (custom extension)
 #define CWNET_CMD_MORSE    0x10  // Morse code keying events
 #define CWNET_CMD_AUDIO    0x11  // Audio samples (A-Law)
 #define CWNET_CMD_CI_V     0x14  // Icom CI-V packet
@@ -212,6 +213,14 @@ esp_err_t cwnet_client_send_keying_event(cwnet_client_t *client,
  * @return Latency in milliseconds, or -1 if not measured yet
  */
 int cwnet_client_get_latency_ms(cwnet_client_t *client);
+
+/**
+ * @brief Send PTT control command to the server
+ * @param client Client instance
+ * @param ptt_on true to enable PTT, false to disable
+ * @return ESP_OK on success
+ */
+esp_err_t cwnet_client_send_ptt(cwnet_client_t *client, bool ptt_on);
 
 // ============================================================================
 // Keying Stream Encoding Functions

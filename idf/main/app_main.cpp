@@ -73,11 +73,12 @@ static TaskHandle_t g_audio_task_handle = nullptr;
 static TaskHandle_t g_decoder_task_handle = nullptr;
 static int16_t g_audio_buffers[kAudioBufferCount][kAudioFramesPerBuffer * 2];
 
-// RemoteCW client
-static cwnet_client_t g_remotecw_client;
-static bool g_remotecw_enabled = false;
+// RemoteCW client (exported for web_server.cpp)
+cwnet_client_t g_remotecw_client;
+bool g_remotecw_enabled = false;
 static int64_t g_last_keying_change_time_us = 0;
 static bool g_last_keying_state = false;
+static bool g_remotecw_ptt_active = false;
 
 struct FeedbackStep {
     bool tone_on;
@@ -454,21 +455,78 @@ static void keyerCallback(bool keying)
     }
 
     // Send event to RemoteCW server if enabled
-    if (g_remotecw_enabled && g_last_keying_change_time_us > 0) {
-        esp_err_t err = cwnet_client_send_keying_event(&g_remotecw_client,
-                                                        keying,
-                                                        duration_ms);
-        if (err != ESP_OK) {
-            // Log only occasionally to avoid flooding
-            static int64_t last_error_log = 0;
-            if (now_us - last_error_log > 5000000) {  // Every 5 seconds
-                ESP_LOGW(TAG, "Failed to send keying event to RemoteCW: %s",
-                        esp_err_to_name(err));
-                last_error_log = now_us;
+    // Protocol: send NEW state with time elapsed since previous event
+    // Format: bit 7 = new state (1=DOWN, 0=UP), bits 6-0 = time to wait before applying
+    if (g_remotecw_enabled) {
+        bool should_send = false;
+        uint32_t send_duration = duration_ms;
+
+        // First event ever (not initialized yet)
+        if (g_last_keying_change_time_us == 0) {
+            // Only send if this is a DOWN event (start of transmission)
+            if (keying) {
+                should_send = true;
+                send_duration = 0;  // First DOWN has 0 delay per protocol
+                ESP_LOGI(TAG, "RemoteCW: First event - sending DOWN with 0ms delay");
+            } else {
+                ESP_LOGD(TAG, "RemoteCW: Skipping initial UP event");
+            }
+        } else {
+            // Subsequent events
+            should_send = true;
+
+            // Skip very long idle UP->UP transitions (> 500ms)
+            if (duration_ms > 500 && !g_last_keying_state && !keying) {
+                ESP_LOGI(TAG, "RemoteCW: Skipping long idle UP->UP (%lu ms)", duration_ms);
+                should_send = false;
+            }
+
+            // First DOWN after long idle: send with 0 delay
+            if (keying && !g_last_keying_state && duration_ms > 500) {
+                send_duration = 0;
+                ESP_LOGI(TAG, "RemoteCW: First DOWN after idle, sending with 0ms delay (was %lu ms)", duration_ms);
+            }
+        }
+
+        if (should_send) {
+            // PTT management per RemoteCW protocol
+            // PTT ON: at start of transmission (first DOWN with duration=0)
+            // PTT OFF: after word space (UP with duration > 500ms)
+            if (keying && send_duration == 0 && !g_remotecw_ptt_active) {
+                // Activate PTT before first keying event
+                cwnet_client_send_ptt(&g_remotecw_client, true);
+                g_remotecw_ptt_active = true;
+                ESP_LOGI(TAG, "RemoteCW: PTT ON (start of transmission)");
+            } else if (!keying && duration_ms > 500 && g_remotecw_ptt_active) {
+                // Deactivate PTT after word space
+                // Note: send PTT OFF before the final UP event (EOT marker)
+                cwnet_client_send_ptt(&g_remotecw_client, false);
+                g_remotecw_ptt_active = false;
+                ESP_LOGI(TAG, "RemoteCW: PTT OFF (end of transmission, word space %lu ms)", duration_ms);
+            }
+
+            ESP_LOGI(TAG, "RemoteCW: %s->%s | Sending %s after %lu ms delay",
+                     g_last_keying_state ? "DOWN" : "UP",
+                     keying ? "DOWN" : "UP",
+                     keying ? "DOWN" : "UP",
+                     send_duration);
+
+            // Send the NEW state with elapsed time since previous state change
+            // This matches RemoteCW protocol: state to apply + delay before applying it
+            esp_err_t err = cwnet_client_send_keying_event(&g_remotecw_client,
+                                                            keying,  // NEW state to apply!
+                                                            send_duration);
+            if (err != ESP_OK) {
+                // Log only occasionally to avoid flooding
+                static int64_t last_error_log = 0;
+                if (now_us - last_error_log > 5000000) {  // Every 5 seconds
+                    ESP_LOGW(TAG, "Failed to send keying event to RemoteCW: %s",
+                            esp_err_to_name(err));
+                    last_error_log = now_us;
+                }
             }
         }
     }
-
     // Update tracking state
     g_last_keying_state = keying;
     g_last_keying_change_time_us = now_us;
